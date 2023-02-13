@@ -610,11 +610,15 @@ CreateColocationGroup(int shardCount, int replicationFactor, Oid distributionCol
 {
 	uint32 colocationId = GetNextColocationId();
 
+	Oid schemaId = InvalidOid;
+	int32 associatedGroupId = INVALID_GROUP_ID;
 	InsertColocationGroupLocally(colocationId, shardCount, replicationFactor,
-								 distributionColumnType, distributionColumnCollation);
+								 distributionColumnType, distributionColumnCollation,
+								 schemaId, associatedGroupId);
 
 	SyncNewColocationGroupToNodes(colocationId, shardCount, replicationFactor,
-								  distributionColumnType, distributionColumnCollation);
+								  distributionColumnType, distributionColumnCollation,
+								  schemaId, associatedGroupId);
 
 	return colocationId;
 }
@@ -626,7 +630,8 @@ CreateColocationGroup(int shardCount, int replicationFactor, Oid distributionCol
 void
 InsertColocationGroupLocally(uint32 colocationId, int shardCount, int replicationFactor,
 							 Oid distributionColumnType,
-							 Oid distributionColumnCollation)
+							 Oid distributionColumnCollation,
+							 Oid schemaId, int32 associatedGroupId)
 {
 	Datum values[Natts_pg_dist_colocation];
 	bool isNulls[Natts_pg_dist_colocation];
@@ -643,6 +648,26 @@ InsertColocationGroupLocally(uint32 colocationId, int shardCount, int replicatio
 		ObjectIdGetDatum(distributionColumnType);
 	values[Anum_pg_dist_colocation_distributioncolumncollation - 1] =
 		ObjectIdGetDatum(distributionColumnCollation);
+
+	if (schemaId == InvalidOid)
+	{
+		isNulls[Anum_pg_dist_colocation_associatedschema - 1] = true;
+	}
+	else
+	{
+		values[Anum_pg_dist_colocation_associatedschema - 1] =
+			ObjectIdGetDatum(schemaId);
+	}
+
+	if (associatedGroupId == INVALID_GROUP_ID)
+	{
+		isNulls[Anum_pg_dist_colocation_associatedgroupid - 1] = true;
+	}
+	else
+	{
+		values[Anum_pg_dist_colocation_associatedgroupid - 1] =
+			Int32GetDatum(associatedGroupId);
+	}
 
 	/* open colocation relation and insert the new tuple */
 	Relation pgDistColocation = table_open(DistColocationRelationId(), RowExclusiveLock);

@@ -39,6 +39,8 @@ extern int MaxMatViewSizeToAutoRecreate;
 
 extern bool EnforceLocalObjectRestrictions;
 
+extern bool EnableSchemaBasedSharding;
+
 extern void SwitchToSequentialAndLocalExecutionIfRelationNameTooLong(Oid relationId,
 																	 char *
 																	 finalRelationName);
@@ -440,8 +442,7 @@ extern void UnmarkRolesDistributed(List *roles);
 extern List * FilterDistributedRoles(List *roles);
 
 /* schema.c - forward declarations */
-extern List * PreprocessCreateSchemaStmt(Node *node, const char *queryString,
-										 ProcessUtilityContext processUtilityContext);
+extern List * PostprocessCreateSchemaStmt(Node *node, const char *queryString);
 extern List * PreprocessDropSchemaStmt(Node *dropSchemaStatement,
 									   const char *queryString,
 									   ProcessUtilityContext processUtilityContext);
@@ -747,7 +748,8 @@ extern void ExecuteAndLogUtilityCommand(const char *commandString);
 extern void ExecuteForeignKeyCreateCommandList(List *ddlCommandList,
 											   bool skip_validation);
 
-/* create_citus_local_table.c */
+/* citus_add_local_table_to_metadata.c */
+extern void CreateCitusManagedTable(Oid relationId, uint32 colocationId);
 extern void CreateCitusLocalTable(Oid relationId, bool cascadeViaForeignKeys,
 								  bool autoConverted);
 extern List * GetExplicitIndexOidList(Oid relationId);

@@ -34,7 +34,9 @@ extern uint32 CreateColocationGroup(int shardCount, int replicationFactor,
 extern void InsertColocationGroupLocally(uint32 colocationId, int shardCount,
 										 int replicationFactor,
 										 Oid distributionColumnType,
-										 Oid distributionColumnCollation);
+										 Oid distributionColumnCollation,
+										 Oid schemaId,
+										 int32 associatedGroupId);
 extern bool IsColocateWithNone(char *colocateWithTableName);
 extern bool IsColocateWithDefault(char *colocateWithTableName);
 extern uint32 GetNextColocationId(void);

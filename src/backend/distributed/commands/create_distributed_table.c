@@ -126,7 +126,6 @@ static Oid SupportFunctionForColumn(Var *partitionColumn, Oid accessMethodId,
 									int16 supportFunctionNumber);
 static void EnsureLocalTableEmptyIfNecessary(Oid relationId, char distributionMethod);
 static bool ShouldLocalTableBeEmpty(Oid relationId, char distributionMethod);
-static void EnsureCitusTableCanBeCreated(Oid relationOid);
 static void PropagatePrerequisiteObjectsForDistributedTable(Oid relationId);
 static void EnsureDistributedSequencesHaveOneType(Oid relationId,
 												  List *seqInfoList);
@@ -908,7 +907,7 @@ create_reference_table(PG_FUNCTION_ARGS)
  * - relation kind is supported
  * - relation is not a shard
  */
-static void
+void
 EnsureCitusTableCanBeCreated(Oid relationOid)
 {
 	EnsureCoordinator();
@@ -951,7 +950,41 @@ EnsureRelationExists(Oid relationId)
 
 
 /*
- * CreateDistributedTable creates distributed table in the given configuration.
+ * CreateDistributedTable is a wrapper around CreateDistributedTableExtended
+ * that automatically decides replicationModel & colocationId parameters for
+ * distributed and reference tables based on colocateWithTableName parameter.
+ */
+void
+CreateDistributedTable(Oid relationId, char *distributionColumnName,
+					   char distributionMethod,
+					   int shardCount, bool shardCountIsStrict,
+					   char *colocateWithTableName)
+{
+	char replicationModel = DecideReplicationModel(distributionMethod,
+												   colocateWithTableName);
+
+	Var *distributionColumn = BuildDistributionKeyFromColumnName(relationId,
+																 distributionColumnName,
+																 NoLock);
+
+	/*
+	 * ColocationIdForNewTable assumes caller acquires lock on relationId. In our case,
+	 * our caller already acquired lock on relationId.
+	 */
+	uint32 colocationId = ColocationIdForNewTable(relationId, distributionColumn,
+												  distributionMethod, replicationModel,
+												  shardCount, shardCountIsStrict,
+												  colocateWithTableName);
+
+	CreateDistributedTableExtended(relationId, distributionColumnName,
+								   distributionMethod,
+								   shardCount, shardCountIsStrict,
+								   replicationModel, colocationId);
+}
+
+
+/*
+ * CreateDistributedTableExtended creates distributed table in the given configuration.
  * This functions contains all necessary logic to create distributed tables. It
  * performs necessary checks to ensure distributing the table is safe. If it is
  * safe to distribute the table, this function creates distributed table metadata,
@@ -959,9 +992,10 @@ EnsureRelationExists(Oid relationId)
  * partitioned tables by distributing its partitions as well.
  */
 void
-CreateDistributedTable(Oid relationId, char *distributionColumnName,
-					   char distributionMethod, int shardCount,
-					   bool shardCountIsStrict, char *colocateWithTableName)
+CreateDistributedTableExtended(Oid relationId, char *distributionColumnName,
+							   char distributionMethod,
+							   int shardCount, bool shardCountIsStrict,
+							   char replicationModel, uint32 colocationId)
 {
 	/*
 	 * EnsureTableNotDistributed errors out when relation is a citus table but
@@ -1022,21 +1056,9 @@ CreateDistributedTable(Oid relationId, char *distributionColumnName,
 
 	PropagatePrerequisiteObjectsForDistributedTable(relationId);
 
-	char replicationModel = DecideReplicationModel(distributionMethod,
-												   colocateWithTableName);
-
 	Var *distributionColumn = BuildDistributionKeyFromColumnName(relationId,
 																 distributionColumnName,
 																 NoLock);
-
-	/*
-	 * ColocationIdForNewTable assumes caller acquires lock on relationId. In our case,
-	 * our caller already acquired lock on relationId.
-	 */
-	uint32 colocationId = ColocationIdForNewTable(relationId, distributionColumn,
-												  distributionMethod, replicationModel,
-												  shardCount, shardCountIsStrict,
-												  colocateWithTableName);
 
 	EnsureRelationCanBeDistributed(relationId, distributionColumn, distributionMethod,
 								   colocationId, replicationModel);
@@ -1085,11 +1107,15 @@ CreateDistributedTable(Oid relationId, char *distributionColumnName,
 	}
 	else if (distributionMethod == DISTRIBUTE_BY_NONE)
 	{
-		/*
-		 * This function does not expect to create Citus local table, so we blindly
-		 * create reference table when the method is DISTRIBUTE_BY_NONE.
-		 */
-		CreateReferenceTableShard(relationId);
+		if (replicationModel == REPLICATION_MODEL_2PC)
+		{
+			CreateReferenceTableShard(relationId);
+		}
+		else
+		{
+			int32 associatedGroupId = GetColocationAssociatedNodeGroup(colocationId);
+			CreateCitusManagedTableShard(relationId, associatedGroupId);
+		}
 	}
 
 	if (ShouldSyncTableMetadata(relationId))

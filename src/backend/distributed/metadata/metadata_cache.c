@@ -176,6 +176,7 @@ typedef struct MetadataCacheData
 	Oid distCleanupRelationId;
 	Oid distCleanupPrimaryKeyIndexId;
 	Oid distColocationRelationId;
+	Oid distColocationSchemaIndexId;
 	Oid distColocationConfigurationIndexId;
 	Oid distPartitionRelationId;
 	Oid distPartitionLogicalRelidIndexId;
@@ -2776,6 +2777,17 @@ DistColocationConfigurationIndexId(void)
 						 &MetadataCache.distColocationConfigurationIndexId);
 
 	return MetadataCache.distColocationConfigurationIndexId;
+}
+
+
+/* return oid of pg_dist_colocation_schema_index index */
+Oid
+DistColocationSchemaIndexId(void)
+{
+	CachedRelationLookup("pg_dist_colocation_schema_index",
+						 &MetadataCache.distColocationSchemaIndexId);
+
+	return MetadataCache.distColocationSchemaIndexId;
 }
 
 

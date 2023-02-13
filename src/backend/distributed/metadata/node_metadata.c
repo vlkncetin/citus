@@ -60,8 +60,6 @@
 #include "utils/rel.h"
 #include "utils/relcache.h"
 
-#define INVALID_GROUP_ID -1
-
 /* default group size */
 int GroupSize = 1;
 

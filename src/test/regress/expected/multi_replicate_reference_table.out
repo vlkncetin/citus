@@ -631,7 +631,7 @@ ORDER BY shardid, nodeport;
 (0 rows)
 
 SELECT * FROM pg_dist_colocation WHERE colocationid = 1370009;
- colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation
+ colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation | associatedschema | associatedgroupid
 ---------------------------------------------------------------------
 (0 rows)
 

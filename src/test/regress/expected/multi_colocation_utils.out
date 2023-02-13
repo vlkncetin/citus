@@ -417,12 +417,12 @@ SELECT create_distributed_table('table_range', 'id', 'range');
 SELECT * FROM pg_dist_colocation
     WHERE colocationid >= 1 AND colocationid < 1000
     ORDER BY colocationid;
- colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation
+ colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation | associatedschema | associatedgroupid
 ---------------------------------------------------------------------
-            4 |          2 |                 2 |                     23 |                           0
-            5 |          2 |                 1 |                     23 |                           0
-            6 |          2 |                 2 |                     25 |                         100
-            7 |          8 |                 2 |                     23 |                           0
+            4 |          2 |                 2 |                     23 |                           0 |                  |
+            5 |          2 |                 1 |                     23 |                           0 |                  |
+            6 |          2 |                 2 |                     25 |                         100 |                  |
+            7 |          8 |                 2 |                     23 |                           0 |                  |
 (4 rows)
 
 -- check to see whether metadata is synced
@@ -430,16 +430,16 @@ SELECT nodeport, unnest(result::jsonb[]) FROM run_command_on_workers($$
 SELECT array_agg(row_to_json(c) ORDER BY colocationid) FROM pg_dist_colocation c
     WHERE colocationid >= 1 AND colocationid < 1000
 $$);
- nodeport |                                                               unnest
+ nodeport |                                                                                         unnest
 ---------------------------------------------------------------------
-    57637 | {"shardcount": 2, "colocationid": 4, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 5, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 6, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
-    57637 | {"shardcount": 8, "colocationid": 7, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 4, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 5, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 6, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
-    57638 | {"shardcount": 8, "colocationid": 7, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 4, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 5, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 6, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
+    57637 | {"shardcount": 8, "colocationid": 7, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 4, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 5, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 6, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
+    57638 | {"shardcount": 8, "colocationid": 7, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
 (8 rows)
 
 SELECT logicalrelid, colocationid FROM pg_dist_partition
@@ -460,25 +460,25 @@ SELECT logicalrelid, colocationid FROM pg_dist_partition
 -- check effects of dropping tables
 DROP TABLE table1_groupA;
 SELECT * FROM pg_dist_colocation WHERE colocationid = 4;
- colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation
+ colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation | associatedschema | associatedgroupid
 ---------------------------------------------------------------------
-            4 |          2 |                 2 |                     23 |                           0
+            4 |          2 |                 2 |                     23 |                           0 |                  |
 (1 row)
 
 -- check to see whether metadata is synced
 SELECT nodeport, unnest(result::jsonb[]) FROM run_command_on_workers($$
 SELECT array_agg(row_to_json(c)) FROM pg_dist_colocation c WHERE colocationid = 4
 $$);
- nodeport |                                                              unnest
+ nodeport |                                                                                        unnest
 ---------------------------------------------------------------------
-    57637 | {"shardcount": 2, "colocationid": 4, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 4, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 4, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 4, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
 (2 rows)
 
 -- dropping all tables in a colocation group also deletes the colocation group
 DROP TABLE table2_groupA;
 SELECT * FROM pg_dist_colocation WHERE colocationid = 4;
- colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation
+ colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation | associatedschema | associatedgroupid
 ---------------------------------------------------------------------
 (0 rows)
 
@@ -573,15 +573,15 @@ SELECT create_distributed_table('table1_group_default', 'id', colocate_with => '
 SELECT * FROM pg_dist_colocation
     WHERE colocationid >= 1 AND colocationid < 1000
     ORDER BY colocationid;
- colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation
+ colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation | associatedschema | associatedgroupid
 ---------------------------------------------------------------------
-            5 |          2 |                 1 |                     23 |                           0
-            6 |          2 |                 2 |                     25 |                         100
-            7 |          8 |                 2 |                     23 |                           0
-            8 |          2 |                 2 |                     23 |                           0
-            9 |          2 |                 2 |                     23 |                           0
-           10 |          2 |                 2 |                     23 |                           0
-           11 |          3 |                 2 |                     23 |                           0
+            5 |          2 |                 1 |                     23 |                           0 |                  |
+            6 |          2 |                 2 |                     25 |                         100 |                  |
+            7 |          8 |                 2 |                     23 |                           0 |                  |
+            8 |          2 |                 2 |                     23 |                           0 |                  |
+            9 |          2 |                 2 |                     23 |                           0 |                  |
+           10 |          2 |                 2 |                     23 |                           0 |                  |
+           11 |          3 |                 2 |                     23 |                           0 |                  |
 (7 rows)
 
 SELECT logicalrelid, colocationid FROM pg_dist_partition
@@ -668,16 +668,16 @@ SELECT create_reference_table('table2_groupF');
 SELECT * FROM pg_dist_colocation
     WHERE colocationid >= 1 AND colocationid < 1000
     ORDER BY colocationid;
- colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation
+ colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation | associatedschema | associatedgroupid
 ---------------------------------------------------------------------
-            5 |          2 |                 1 |                     23 |                           0
-            6 |          2 |                 2 |                     25 |                         100
-            7 |          8 |                 2 |                     23 |                           0
-            8 |          2 |                 2 |                     23 |                           0
-            9 |          2 |                 2 |                     23 |                           0
-           10 |          2 |                 2 |                     23 |                           0
-           11 |          3 |                 2 |                     23 |                           0
-           12 |          1 |                -1 |                      0 |                           0
+            5 |          2 |                 1 |                     23 |                           0 |                  |
+            6 |          2 |                 2 |                     25 |                         100 |                  |
+            7 |          8 |                 2 |                     23 |                           0 |                  |
+            8 |          2 |                 2 |                     23 |                           0 |                  |
+            9 |          2 |                 2 |                     23 |                           0 |                  |
+           10 |          2 |                 2 |                     23 |                           0 |                  |
+           11 |          3 |                 2 |                     23 |                           0 |                  |
+           12 |          1 |                -1 |                      0 |                           0 |                  |
 (8 rows)
 
 -- cross check with internal colocation API
@@ -848,7 +848,7 @@ UPDATE pg_dist_partition SET colocationid = 0
 SELECT * FROM pg_dist_colocation
     WHERE colocationid >= 1 AND colocationid < 1000
     ORDER BY colocationid;
- colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation
+ colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation | associatedschema | associatedgroupid
 ---------------------------------------------------------------------
 (0 rows)
 
@@ -878,7 +878,7 @@ DETAIL:  Shard counts don't match for table1_groupd and table1_groupb.
 SELECT * FROM pg_dist_colocation
     WHERE colocationid >= 1 AND colocationid < 1000
     ORDER BY colocationid;
- colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation
+ colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation | associatedschema | associatedgroupid
 ---------------------------------------------------------------------
 (0 rows)
 
@@ -946,15 +946,15 @@ SELECT create_distributed_table('table2_group_none', 'id', colocate_with => 'NON
 SELECT * FROM pg_dist_colocation
     WHERE colocationid >= 1 AND colocationid < 1000
     ORDER BY colocationid;
- colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation
+ colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation | associatedschema | associatedgroupid
 ---------------------------------------------------------------------
-            1 |          2 |                 1 |                     23 |                           0
-            2 |          2 |                 2 |                     25 |                         100
-            3 |          8 |                 2 |                     23 |                           0
-            4 |          2 |                 2 |                     23 |                           0
-            5 |          2 |                 2 |                     23 |                           0
-            6 |          2 |                 2 |                     23 |                           0
-            7 |          2 |                 2 |                     23 |                           0
+            1 |          2 |                 1 |                     23 |                           0 |                  |
+            2 |          2 |                 2 |                     25 |                         100 |                  |
+            3 |          8 |                 2 |                     23 |                           0 |                  |
+            4 |          2 |                 2 |                     23 |                           0 |                  |
+            5 |          2 |                 2 |                     23 |                           0 |                  |
+            6 |          2 |                 2 |                     23 |                           0 |                  |
+            7 |          2 |                 2 |                     23 |                           0 |                  |
 (7 rows)
 
 -- check to see whether metadata is synced
@@ -962,22 +962,22 @@ SELECT nodeport, unnest(result::jsonb[]) FROM run_command_on_workers($$
 SELECT array_agg(row_to_json(c) ORDER BY colocationid) FROM pg_dist_colocation c
     WHERE colocationid >= 1 AND colocationid < 1000
 $$);
- nodeport |                                                               unnest
+ nodeport |                                                                                         unnest
 ---------------------------------------------------------------------
-    57637 | {"shardcount": 2, "colocationid": 1, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 2, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
-    57637 | {"shardcount": 8, "colocationid": 3, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 4, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 5, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 6, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 7, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 1, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 2, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
-    57638 | {"shardcount": 8, "colocationid": 3, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 4, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 5, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 6, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 7, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 1, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 2, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
+    57637 | {"shardcount": 8, "colocationid": 3, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 4, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 5, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 6, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 7, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 1, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 2, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
+    57638 | {"shardcount": 8, "colocationid": 3, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 4, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 5, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 6, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 7, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
 (14 rows)
 
 SELECT logicalrelid, colocationid FROM pg_dist_partition
@@ -1041,14 +1041,14 @@ SELECT update_distributed_table_colocation('table1_group_none', colocate_with =>
 SELECT * FROM pg_dist_colocation
     WHERE colocationid >= 1 AND colocationid < 1000
     ORDER BY colocationid;
- colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation
+ colocationid | shardcount | replicationfactor | distributioncolumntype | distributioncolumncollation | associatedschema | associatedgroupid
 ---------------------------------------------------------------------
-            1 |          2 |                 1 |                     23 |                           0
-            2 |          2 |                 2 |                     25 |                         100
-            3 |          8 |                 2 |                     23 |                           0
-            4 |          2 |                 2 |                     23 |                           0
-            5 |          2 |                 2 |                     23 |                           0
-            7 |          2 |                 2 |                     23 |                           0
+            1 |          2 |                 1 |                     23 |                           0 |                  |
+            2 |          2 |                 2 |                     25 |                         100 |                  |
+            3 |          8 |                 2 |                     23 |                           0 |                  |
+            4 |          2 |                 2 |                     23 |                           0 |                  |
+            5 |          2 |                 2 |                     23 |                           0 |                  |
+            7 |          2 |                 2 |                     23 |                           0 |                  |
 (6 rows)
 
 -- check to see whether metadata is synced
@@ -1056,20 +1056,20 @@ SELECT nodeport, unnest(result::jsonb[]) FROM run_command_on_workers($$
 SELECT array_agg(row_to_json(c) ORDER BY colocationid) FROM pg_dist_colocation c
     WHERE colocationid >= 1 AND colocationid < 1000
 $$);
- nodeport |                                                               unnest
+ nodeport |                                                                                         unnest
 ---------------------------------------------------------------------
-    57637 | {"shardcount": 2, "colocationid": 1, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 2, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
-    57637 | {"shardcount": 8, "colocationid": 3, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 4, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 5, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57637 | {"shardcount": 2, "colocationid": 7, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 1, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 2, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
-    57638 | {"shardcount": 8, "colocationid": 3, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 4, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 5, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
-    57638 | {"shardcount": 2, "colocationid": 7, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 1, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 2, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
+    57637 | {"shardcount": 8, "colocationid": 3, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 4, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 5, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57637 | {"shardcount": 2, "colocationid": 7, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 1, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 1, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 2, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "25", "distributioncolumncollation": "100"}
+    57638 | {"shardcount": 8, "colocationid": 3, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 4, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 5, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
+    57638 | {"shardcount": 2, "colocationid": 7, "associatedschema": null, "associatedgroupid": null, "replicationfactor": 2, "distributioncolumntype": "23", "distributioncolumncollation": "0"}
 (12 rows)
 
 SELECT logicalrelid, colocationid FROM pg_dist_partition

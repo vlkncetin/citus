@@ -24,6 +24,7 @@
 #include "distributed/commands/utility_hook.h"
 #include "distributed/deparser.h"
 #include "distributed/listutils.h"
+#include "distributed/colocation_utils.h"
 #include "distributed/metadata/distobject.h"
 #include "distributed/metadata_cache.h"
 #include <distributed/metadata_sync.h>
@@ -40,6 +41,9 @@
 #include "utils/relcache.h"
 
 
+bool EnableSchemaBasedSharding = true;
+
+
 static List * GetObjectAddressBySchemaName(char *schemaName, bool missing_ok);
 static List * FilterDistributedSchemas(List *schemas);
 static bool SchemaHasDistributedTableWithFKey(char *schemaName);
@@ -48,13 +52,14 @@ static List * GetGrantCommandsFromCreateSchemaStmt(Node *node);
 
 
 /*
- * PreprocessCreateSchemaStmt is called during the planning phase for
+ * PostprocessCreateSchemaStmt is called during the planning phase for
  * CREATE SCHEMA ..
  */
 List *
-PreprocessCreateSchemaStmt(Node *node, const char *queryString,
-						   ProcessUtilityContext processUtilityContext)
+PostprocessCreateSchemaStmt(Node *node, const char *queryString)
 {
+	CreateSchemaStmt *createSchemaStmt = castNode(CreateSchemaStmt, node);
+
 	if (!ShouldPropagateCreateSchemaStmt())
 	{
 		return NIL;
@@ -73,6 +78,47 @@ PreprocessCreateSchemaStmt(Node *node, const char *queryString,
 	commands = lappend(commands, (void *) sql);
 
 	commands = list_concat(commands, GetGrantCommandsFromCreateSchemaStmt(node));
+
+	/*
+	 * Create a new colocation group associated with this schema. This
+	 * colocation group will be used to colocate the Citus managed tables
+	 * that are (automatically) created in this schema.
+	 */
+	if (EnableSchemaBasedSharding)
+	{
+		/* enable schema-based sharding on an empty node */
+		InsertCoordinatorIfClusterEmpty();
+
+		/* TODO: choose a random node for now */
+		List *activePrimaryNodeList = ActivePrimaryNodeList(RowShareLock);
+		int workerChoiceIndex = (random() / RAND_MAX) *
+								(list_length(activePrimaryNodeList) - 1);
+		WorkerNode *workerChoice = list_nth(activePrimaryNodeList, workerChoiceIndex);
+		int32 associatedGroupId = workerChoice->groupId;
+
+		bool missingOk = false;
+		Oid schemaId = get_namespace_oid(createSchemaStmt->schemaname, missingOk);
+
+		uint32 colocationId = GetNextColocationId();
+
+		int shardCount = 1;
+		int replicationFactor = 1;
+		Oid distributionColumnType = InvalidOid;
+		Oid distributionColumnCollation = InvalidOid;
+
+		InsertColocationGroupLocally(colocationId, shardCount, replicationFactor,
+									 distributionColumnType, distributionColumnCollation,
+									 schemaId, associatedGroupId);
+
+		/* TODO: Maybe we should send this as a metadata sync command, as in ddlJob->metadataSyncCommand */
+		char *colocationGroupCreateCommand =
+			ColocationGroupCreateCommand(colocationId, shardCount, replicationFactor,
+										 distributionColumnType,
+										 distributionColumnCollation,
+										 schemaId, associatedGroupId);
+
+		commands = lappend(commands, (void *) colocationGroupCreateCommand);
+	}
 
 	commands = lappend(commands, ENABLE_DDL_PROPAGATION);
 

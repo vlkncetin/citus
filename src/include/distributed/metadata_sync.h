@@ -112,7 +112,15 @@ extern void SetLocalEnableMetadataSync(bool state);
 extern void SyncNewColocationGroupToNodes(uint32 colocationId, int shardCount,
 										  int replicationFactor,
 										  Oid distributionColumType,
-										  Oid distributionColumnCollation);
+										  Oid distributionColumnCollation,
+										  Oid schemaId,
+										  int32 associatedGroupId);
+extern char * ColocationGroupCreateCommand(uint32 colocationId, int shardCount,
+										   int replicationFactor,
+										   Oid distributionColumnType,
+										   Oid distributionColumnCollation,
+										   Oid schemaId,
+										   int32 associatedGroupId);
 extern void SyncDeleteColocationGroupToNodes(uint32 colocationId);
 
 #define DELETE_ALL_NODES "DELETE FROM pg_dist_node"

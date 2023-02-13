@@ -318,13 +318,25 @@ extern void UpdateDistributionColumnGlobally(Oid relationId, char distributionMe
 											 Var *distributionColumn, int colocationId);
 extern void UpdateDistributionColumn(Oid relationId, char distributionMethod,
 									 Var *distributionColumn, int colocationId);
+extern uint32 GetSchemaAssociatedColocation(Oid schemaId);
+extern int32 GetColocationAssociatedNodeGroup(uint32 colocationId);
 extern void DeletePartitionRow(Oid distributedRelationId);
 extern void DeleteShardRow(uint64 shardId);
 extern void UpdatePlacementGroupId(uint64 placementId, int groupId);
 extern void DeleteShardPlacementRow(uint64 placementId);
-extern void CreateDistributedTable(Oid relationId, char *distributionColumnName,
-								   char distributionMethod, int shardCount,
-								   bool shardCountIsStrict, char *colocateWithTableName);
+extern void CreateDistributedTable(Oid relationId,
+								   char *distributionColumnName,
+								   char distributionMethod,
+								   int shardCount, bool
+								   shardCountIsStrict,
+								   char *colocateWithTableName);
+extern void CreateDistributedTableExtended(Oid relationId,
+										   char *distributionColumnName,
+										   char distributionMethod,
+										   int shardCount, bool shardCountIsStrict,
+										   char replicationModel,
+										   uint32 colocationId);
+extern void EnsureCitusTableCanBeCreated(Oid relationOid);
 extern void CreateTruncateTrigger(Oid relationId);
 extern TableConversionReturn * UndistributeTable(TableConversionParameters *params);
 

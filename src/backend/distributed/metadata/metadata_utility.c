@@ -2182,6 +2182,86 @@ UpdateDistributionColumn(Oid relationId, char distributionMethod, Var *distribut
 
 
 /*
+ * GetSchemaAssociatedColocation returns the colocation id associated with
+ * given schema. If there is no such schema or if it it's not associated with
+ * a colocation group, then returns INVALID_COLOCATION_ID.
+ */
+uint32
+GetSchemaAssociatedColocation(Oid schemaId)
+{
+	uint32 associatedColocationId = INVALID_COLOCATION_ID;
+
+	ScanKeyData scanKey[1];
+	ScanKeyInit(&scanKey[0], Anum_pg_dist_colocation_associatedschema,
+				BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(schemaId));
+
+	Relation metadataRel = table_open(DistColocationRelationId(), RowExclusiveLock);
+
+	Oid indexId = DistColocationSchemaIndexId();
+	bool indexOk = true;
+	SysScanDesc scanDescriptor = systable_beginscan(metadataRel, indexId, indexOk,
+													NULL, 1, scanKey);
+
+	HeapTuple heapTuple = systable_getnext(scanDescriptor);
+	if (HeapTupleIsValid(heapTuple))
+	{
+		Datum values[Natts_pg_dist_colocation] = { 0 };
+		bool isnull[Natts_pg_dist_colocation] = { 0 };
+
+		heap_deform_tuple(heapTuple, RelationGetDescr(metadataRel), values, isnull);
+
+		associatedColocationId = DatumGetUInt32(
+			values[Anum_pg_dist_colocation_colocationid - 1]);
+	}
+
+	systable_endscan(scanDescriptor);
+	table_close(metadataRel, RowExclusiveLock);
+
+	return associatedColocationId;
+}
+
+
+/*
+ * GetColocationAssociatedNodeGroup returns the node group associated with
+ * given colocation group. If there is no such colocation group or if it's
+ * not associated with a node group, then returns INVALID_GROUP_ID.
+ */
+int32
+GetColocationAssociatedNodeGroup(uint32 colocationId)
+{
+	int32 associatedGroupId = INVALID_GROUP_ID;
+
+	ScanKeyData scanKey[1];
+	ScanKeyInit(&scanKey[0], Anum_pg_dist_colocation_colocationid,
+				BTEqualStrategyNumber, F_OIDEQ, UInt32GetDatum(colocationId));
+
+	Relation metadataRel = table_open(DistColocationRelationId(), RowExclusiveLock);
+
+	Oid indexId = DistColocationIndexId();
+	bool indexOk = true;
+	SysScanDesc scanDescriptor = systable_beginscan(metadataRel, indexId, indexOk,
+													NULL, 1, scanKey);
+
+	HeapTuple heapTuple = systable_getnext(scanDescriptor);
+	if (HeapTupleIsValid(heapTuple))
+	{
+		Datum values[Natts_pg_dist_colocation] = { 0 };
+		bool isnull[Natts_pg_dist_colocation] = { 0 };
+
+		heap_deform_tuple(heapTuple, RelationGetDescr(metadataRel), values, isnull);
+
+		associatedGroupId = DatumGetUInt32(
+			values[Anum_pg_dist_colocation_associatedgroupid - 1]);
+	}
+
+	systable_endscan(scanDescriptor);
+	table_close(metadataRel, RowExclusiveLock);
+
+	return associatedGroupId;
+}
+
+
+/*
  * Check that the current user has `mode` permissions on relationId, error out
  * if not. Superusers always have such permissions.
  */

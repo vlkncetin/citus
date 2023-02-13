@@ -226,6 +226,7 @@ extern Oid CitusCatalogNamespaceId(void);
 extern Oid DistCleanupRelationId(void);
 extern Oid DistColocationRelationId(void);
 extern Oid DistColocationConfigurationIndexId(void);
+extern Oid DistColocationSchemaIndexId(void);
 extern Oid DistPartitionRelationId(void);
 extern Oid DistShardRelationId(void);
 extern Oid DistPlacementRelationId(void);

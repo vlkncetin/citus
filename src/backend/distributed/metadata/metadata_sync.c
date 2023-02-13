@@ -137,12 +137,9 @@ static void EnsureShardMetadataIsSane(Oid relationId, int64 shardId, char storag
 static void EnsureShardPlacementMetadataIsSane(Oid relationId, int64 shardId,
 											   int64 placementId,
 											   int64 shardLength, int32 groupId);
-static char * ColocationGroupCreateCommand(uint32 colocationId, int shardCount,
-										   int replicationFactor,
-										   Oid distributionColumnType,
-										   Oid distributionColumnCollation);
 static char * ColocationGroupDeleteCommand(uint32 colocationId);
 static char * RemoteTypeIdExpression(Oid typeId);
+static char * RemoteSchemaIdExpression(Oid schemaId);
 static char * RemoteCollationIdExpression(Oid colocationId);
 
 
@@ -3766,6 +3763,8 @@ citus_internal_add_colocation_metadata(PG_FUNCTION_ARGS)
 	int replicationFactor = PG_GETARG_INT32(2);
 	Oid distributionColumnType = PG_GETARG_INT32(3);
 	Oid distributionColumnCollation = PG_GETARG_INT32(4);
+	Oid schemaId = PG_GETARG_INT32(5);
+	int32 associatedgroupid = PG_GETARG_INT32(6);
 
 	if (!ShouldSkipMetadataChecks())
 	{
@@ -3774,7 +3773,8 @@ citus_internal_add_colocation_metadata(PG_FUNCTION_ARGS)
 	}
 
 	InsertColocationGroupLocally(colocationId, shardCount, replicationFactor,
-								 distributionColumnType, distributionColumnCollation);
+								 distributionColumnType, distributionColumnCollation,
+								 schemaId, associatedgroupid);
 
 	PG_RETURN_VOID();
 }
@@ -3809,12 +3809,14 @@ citus_internal_delete_colocation_metadata(PG_FUNCTION_ARGS)
  */
 void
 SyncNewColocationGroupToNodes(uint32 colocationId, int shardCount, int replicationFactor,
-							  Oid distributionColumnType, Oid distributionColumnCollation)
+							  Oid distributionColumnType, Oid distributionColumnCollation,
+							  Oid schemaId, int32 associatedGroupId)
 {
 	char *command = ColocationGroupCreateCommand(colocationId, shardCount,
 												 replicationFactor,
 												 distributionColumnType,
-												 distributionColumnCollation);
+												 distributionColumnCollation,
+												 schemaId, associatedGroupId);
 
 	/*
 	 * We require superuser for all pg_dist_colocation operations because we have
@@ -3827,20 +3829,23 @@ SyncNewColocationGroupToNodes(uint32 colocationId, int shardCount, int replicati
 /*
  * ColocationGroupCreateCommand returns a command for creating a colocation group.
  */
-static char *
+char *
 ColocationGroupCreateCommand(uint32 colocationId, int shardCount, int replicationFactor,
-							 Oid distributionColumnType, Oid distributionColumnCollation)
+							 Oid distributionColumnType, Oid distributionColumnCollation,
+							 Oid schemaId, int32 associatedGroupId)
 {
 	StringInfo insertColocationCommand = makeStringInfo();
 
 	appendStringInfo(insertColocationCommand,
 					 "SELECT pg_catalog.citus_internal_add_colocation_metadata("
-					 "%d, %d, %d, %s, %s)",
+					 "%d, %d, %d, %s, %s, %s, %d)",
 					 colocationId,
 					 shardCount,
 					 replicationFactor,
 					 RemoteTypeIdExpression(distributionColumnType),
-					 RemoteCollationIdExpression(distributionColumnCollation));
+					 RemoteCollationIdExpression(distributionColumnCollation),
+					 RemoteSchemaIdExpression(schemaId),
+					 associatedGroupId);
 
 	return insertColocationCommand->data;
 }
@@ -3874,6 +3879,36 @@ RemoteTypeIdExpression(Oid typeId)
 							 quote_literal_cstr(typeName));
 
 			expression = regtypeExpression->data;
+		}
+	}
+
+	return expression;
+}
+
+
+/*
+ * RemoteSchemaIdExpression returns an expression in text form that can
+ * be used to obtain the OID of a schema on a different node when included
+ * in a query string.
+ */
+static char *
+RemoteSchemaIdExpression(Oid schemaId)
+{
+	char *expression = "0";
+
+	if (schemaId != InvalidOid)
+	{
+		char *schemaName = get_namespace_name(schemaId);
+
+		if (schemaName != NULL)
+		{
+			StringInfo regnamespaceExpression = makeStringInfo();
+
+			appendStringInfo(regnamespaceExpression,
+							 "%s::regnamespace",
+							 quote_literal_cstr(schemaName));
+
+			expression = regnamespaceExpression->data;
 		}
 	}
 
@@ -3967,7 +4002,8 @@ ColocationGroupCreateCommandList(void)
 					 "WITH colocation_group_data (colocationid, shardcount, "
 					 "replicationfactor, distributioncolumntype, "
 					 "distributioncolumncollationname, "
-					 "distributioncolumncollationschema)  AS (VALUES ");
+					 "distributioncolumncollationschema, "
+					 "associatedschema, associatedgroupid)  AS (VALUES ");
 
 	Relation pgDistColocation = table_open(DistColocationRelationId(), AccessShareLock);
 	Relation colocationIdIndexRel = index_open(DistColocationIndexId(), AccessShareLock);
@@ -4022,7 +4058,7 @@ ColocationGroupCreateCommandList(void)
 					collationform->collnamespace);
 
 				appendStringInfo(colocationGroupCreateCommand,
-								 "%s, %s)",
+								 "%s, %s,",
 								 quote_literal_cstr(collationName),
 								 quote_literal_cstr(collationSchemaName));
 
@@ -4031,14 +4067,34 @@ ColocationGroupCreateCommandList(void)
 			else
 			{
 				appendStringInfo(colocationGroupCreateCommand,
-								 "NULL, NULL)");
+								 "NULL, NULL,");
 			}
 		}
 		else
 		{
 			appendStringInfo(colocationGroupCreateCommand,
-							 "NULL, NULL)");
+							 "NULL, NULL,");
 		}
+
+		Oid associatedschema = InvalidOid;
+		if (!heap_attisnull(colocationTuple,
+							Anum_pg_dist_colocation_associatedschema,
+							RelationGetDescr(pgDistColocation)))
+		{
+			associatedschema = colocationForm->associatedschema;
+		}
+
+		int32 associatedgroupid = INVALID_GROUP_ID;
+		if (!heap_attisnull(colocationTuple,
+							Anum_pg_dist_colocation_associatedgroupid,
+							RelationGetDescr(pgDistColocation)))
+		{
+			associatedgroupid = colocationForm->associatedgroupid;
+		}
+
+		appendStringInfo(colocationGroupCreateCommand, "%s, %d)",
+						 RemoteSchemaIdExpression(associatedschema),
+						 associatedgroupid);
 
 		colocationTuple = systable_getnext_ordered(scanDescriptor, ForwardScanDirection);
 	}
@@ -4055,8 +4111,8 @@ ColocationGroupCreateCommandList(void)
 	appendStringInfo(colocationGroupCreateCommand,
 					 ") SELECT pg_catalog.citus_internal_add_colocation_metadata("
 					 "colocationid, shardcount, replicationfactor, "
-					 "distributioncolumntype, coalesce(c.oid, 0)) "
-					 "FROM colocation_group_data d LEFT JOIN pg_collation c "
+					 "distributioncolumntype, coalesce(c.oid, 0), associatedschema, "
+					 "associatedgroupid) FROM colocation_group_data d LEFT JOIN pg_collation c "
 					 "ON (d.distributioncolumncollationname = c.collname "
 					 "AND d.distributioncolumncollationschema::regnamespace"
 					 " = c.collnamespace)");

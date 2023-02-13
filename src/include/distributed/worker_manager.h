@@ -33,6 +33,7 @@
 
 #define WORKER_DEFAULT_CLUSTER "default"
 
+#define INVALID_GROUP_ID -1
 #define COORDINATOR_GROUP_ID 0
 
 /*
