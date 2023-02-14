@@ -355,6 +355,83 @@ CreateReferenceTableShard(Oid distributedTableId)
 
 
 /*
+ * CreateCitusManagedTableShard creates a shard for a Citus managed table.
+ */
+void
+CreateCitusManagedTableShard(Oid relationId, int32 associatedGroupId)
+{
+	/* useExclusiveConnection is only relevant when creating multiple shards */
+	bool useExclusiveConnection = false;
+
+	/*
+	 * We currently allow concurrent distribution of colocated tables (which
+	 * we probably should not be allowing because of foreign keys /
+	 * partitioning etc).
+	 *
+	 * We also prevent concurrent shard moves / copy / splits) while creating
+	 * a colocated table.
+	 */
+
+	/* TODO: AcquirePlacementColocationLock(colocatedTableId, ShareLock, */
+	/*                                      "colocate distributed table"); */
+
+	bool colocatedShard = true;
+	List *insertedShardPlacements = NIL;
+
+	/*
+	 * In contrast to append/range partitioned tables it makes more sense to
+	 * require ownership privileges - shards for hash-partitioned tables are
+	 * only created once, not continually during ingest as for the other
+	 * partitioning types.
+	 */
+	EnsureTableOwner(relationId);
+
+	/* we plan to add shards: get an exclusive lock on target relation oid */
+	LockRelationOid(relationId, ExclusiveLock);
+
+	/* TODO: LockRelationOid(sourceRelationId, AccessShareLock); */
+
+	/* prevent placement changes of the source relation until we colocate with them */
+	/* TODO: List *sourceShardIntervalList = LoadShardIntervalList(sourceRelationId); */
+	/* TODO: LockShardListMetadata(sourceShardIntervalList, ShareLock); */
+
+	/* validate that shards haven't already been created for this table */
+	List *existingShardList = LoadShardList(relationId);
+	if (existingShardList != NIL)
+	{
+		char *targetRelationName = get_rel_name(relationId);
+		ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+						errmsg("table \"%s\" has already had shards created for it",
+							   targetRelationName)));
+	}
+
+	char targetShardStorageType = ShardStorageType(relationId);
+
+	uint64 newShardId = GetNextShardId();
+	InsertShardRow(relationId, newShardId, targetShardStorageType,
+				   NULL, NULL);
+
+	const uint64 shardSize = 0;
+
+	/*
+	 * Optimistically add shard placement row the pg_dist_shard_placement, in case
+	 * of any error it will be roll-backed.
+	 */
+	uint64 shardPlacementId = InsertShardPlacementRow(newShardId,
+													  INVALID_PLACEMENT_ID,
+													  shardSize,
+													  associatedGroupId);
+
+	ShardPlacement *shardPlacement = LoadShardPlacement(newShardId,
+														shardPlacementId);
+	insertedShardPlacements = lappend(insertedShardPlacements, shardPlacement);
+
+	CreateShardsOnWorkers(relationId, insertedShardPlacements,
+						  useExclusiveConnection, colocatedShard);
+}
+
+
+/*
  * CheckHashPartitionedTable looks up the partition information for the given
  * tableId and checks if the table is hash partitioned. If not, the function
  * throws an error.

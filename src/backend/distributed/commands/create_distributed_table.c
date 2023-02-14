@@ -1745,8 +1745,15 @@ EnsureRelationCanBeDistributed(Oid relationId, Var *distributionColumn,
 	 */
 	if (PartitionedTableNoLock(relationId))
 	{
-		/* distributing partitioned tables in only supported for hash-distribution */
-		if (distributionMethod != DISTRIBUTE_BY_HASH)
+		/*
+         * Distributing partitioned tables in only supported for hash-distribution
+         * or single placement tables.
+         *
+         * TODO: Improve this check and the comment. Maybe only cover Citus managed tables?
+         */
+		if (distributionMethod != DISTRIBUTE_BY_HASH &&
+			!(distributionMethod == DISTRIBUTE_BY_NONE &&
+              replicationModel == REPLICATION_MODEL_STREAMING))
 		{
 			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							errmsg("distributing partitioned tables in only supported "

@@ -116,6 +116,7 @@ static void DecrementUtilityHookCountersIfNecessary(Node *parsetree);
 static bool IsDropSchemaOrDB(Node *parsetree);
 static bool ShouldCheckUndistributeCitusLocalTables(void);
 static bool ShouldAddNewTableToMetadata(Node *parsetree);
+static bool ShouldCreateCitusManagedTable(Node *parsetree);
 
 /*
  * ProcessUtilityParseTree is a convenience method to create a PlannedStmt out of
@@ -363,6 +364,28 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 				bool autoConverted = false;
 				bool cascade = true;
 				CreateCitusLocalTable(relationId, cascade, autoConverted);
+			}
+			else if (context == PROCESS_UTILITY_TOPLEVEL &&
+					 ShouldCreateCitusManagedTable(parsetree))
+			{
+				/*
+				 * Here we need to increment command counter so that next command
+				 * can see the new table.
+				 */
+				CommandCounterIncrement();
+				CreateStmt *createTableStmt = (CreateStmt *) parsetree;
+				Oid relationId = RangeVarGetRelid(createTableStmt->relation,
+												  NoLock, false);
+
+				uint32 associatedColocationId =
+					GetSchemaAssociatedColocation(get_rel_namespace(relationId));
+				if (associatedColocationId == INVALID_COLOCATION_ID)
+				{
+					/* not expected but .. */
+					ereport(ERROR, (errmsg("could not assign a colocation id to table")));
+				}
+
+				CreateCitusManagedTable(relationId, associatedColocationId);
 			}
 		}
 
@@ -1106,6 +1129,65 @@ ShouldAddNewTableToMetadata(Node *parsetree)
 		 * and we are on the coordinator that is added as worker node.
 		 * So return true here, to add this newly created table to metadata.
 		 */
+		return true;
+	}
+
+	return false;
+}
+
+
+/*
+ */
+static bool
+ShouldCreateCitusManagedTable(Node *parsetree)
+{
+	/*
+	 * Can colocate table with schema when the sql version doesn't match
+	 * the library version, e.g., when the sql is version is behind 11.3-1,
+	 * then pg_dist_colocation lacks of some columns required to do the
+	 * bookkeeping.
+	 *
+	 * We expect this to happen only during regression tests, especially
+	 * when testing the Citus upgrade paths in multi_extension.sql
+	 */
+	if (!EnableVersionChecks || !CheckCitusVersion(DEBUG4))
+	{
+		return false;
+	}
+
+	CreateStmt *createTableStmt;
+
+	if (IsA(parsetree, CreateStmt))
+	{
+		createTableStmt = (CreateStmt *) parsetree;
+	}
+	else if (IsA(parsetree, CreateForeignTableStmt))
+	{
+		CreateForeignTableStmt *createForeignTableStmt =
+			(CreateForeignTableStmt *) parsetree;
+		createTableStmt = (CreateStmt *) &(createForeignTableStmt->base);
+	}
+	else
+	{
+		/* if the command is not CREATE [FOREIGN] TABLE, we can early return false */
+		return false;
+	}
+
+	if (createTableStmt->relation->relpersistence == RELPERSISTENCE_TEMP ||
+		createTableStmt->partbound != NULL)
+	{
+		/*
+		 * Shouldn't add table to metadata if it's a temp table, or a partition.
+		 * Creating partitions of a table that is added to metadata is already handled.
+		 */
+		return false;
+	}
+
+	if (GetSchemaAssociatedColocation(RangeVarGetCreationNamespace(
+										  createTableStmt->relation)) !=
+		INVALID_COLOCATION_ID &&
+		!IsBinaryUpgrade && IsCoordinator() && CoordinatorAddedAsWorkerNode())
+	{
 		return true;
 	}
 

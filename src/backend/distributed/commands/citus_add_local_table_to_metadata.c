@@ -12,6 +12,9 @@
  * Note that we might still call this local table concept as "citus local" in
  * many places of the code base.
  *
+ * TODO: Comment what is a Citus local table / Citus managed table and the
+ *       differences between them.
+ *
  * Copyright (c) Citus Data, Inc.
  *
  *-------------------------------------------------------------------------
@@ -58,6 +61,9 @@ bool AddAllLocalTablesToMetadata = true;
 
 static void citus_add_local_table_to_metadata_internal(Oid relationId,
 													   bool cascadeViaForeignKeys);
+static void CreateSinglePlacementTableOnLocalNode(Oid relationId, uint32 colocationId,
+												  bool cascadeViaForeignKeys,
+												  bool autoConverted);
 static void ErrorIfAddingPartitionTableToMetadata(Oid relationId);
 static void ErrorIfUnsupportedCreateCitusLocalTable(Relation relation);
 static void ErrorIfUnsupportedCitusLocalTableKind(Oid relationId);
@@ -96,7 +102,7 @@ static void DropDefaultColumnDefinition(Oid relationId, char *columnName);
 static void TransferSequenceOwnership(Oid ownedSequenceId, Oid targetRelationId,
 									  char *columnName);
 static void InsertMetadataForCitusLocalTable(Oid citusLocalTableId, uint64 shardId,
-											 bool autoConverted);
+											 uint32 colocationId, bool autoConverted);
 static void FinalizeCitusLocalTableCreation(Oid relationId);
 
 
@@ -184,19 +190,98 @@ remove_local_tables_from_metadata(PG_FUNCTION_ARGS)
 
 
 /*
- * CreateCitusLocalTable is the internal method that creates a citus table
- * from the table with relationId. The created table would have the following
- * properties:
+ * CreateCitusManagedTable creates a Citus managed table in given colocation
+ * group.
+ */
+void
+CreateCitusManagedTable(Oid relationId, uint32 colocationId)
+{
+	/*
+	 * These checks should be done before acquiring any locks on relation.
+	 * This is because we don't allow this operation in worker nodes and
+	 * we don't want to acquire any locks on a table if we are not the
+	 * owner of it.
+	 */
+	EnsureCoordinator();
+	EnsureTableOwner(relationId);
+
+	LockRelationOid(relationId, ExclusiveLock);
+
+	int32 associatedGroupId = GetColocationAssociatedNodeGroup(colocationId);
+	if (associatedGroupId == INVALID_GROUP_ID)
+	{
+		/* not expected but .. */
+		ereport(ERROR, (errmsg("could not assign a node group to table")));
+	}
+
+	/*
+	 * Use CreateDistributedTableExtended to create the Citus managed table
+     * if it's assigned to a remote node. Otherwise, we can simply use
+     * CreateSinglePlacementTableOnLocalNode.
+	 */
+	if (associatedGroupId != COORDINATOR_GROUP_ID)
+	{
+		EnsureCitusTableCanBeCreated(relationId);
+
+		char *distributionColumnName = NULL;
+		char distributionMethod = DISTRIBUTE_BY_NONE;
+		char replicationModel = REPLICATION_MODEL_STREAMING;
+		int shardCount = 1;
+		bool shardCountIsStrict = true;
+		CreateDistributedTableExtended(relationId, distributionColumnName,
+									   distributionMethod,
+									   shardCount, shardCountIsStrict,
+									   replicationModel,
+									   colocationId);
+	}
+	else
+	{
+		bool cascadeViaForeignKeys = false;
+		bool autoConverted = false;
+		CreateSinglePlacementTableOnLocalNode(relationId, colocationId,
+											  cascadeViaForeignKeys, autoConverted);
+	}
+}
+
+
+/*
+ * CreateCitusLocalTable is a wrapper around CreateSinglePlacementTableOnLocalNode
+ * that allows creating a Citus local table.
+ */
+void
+CreateCitusLocalTable(Oid relationId, bool cascadeViaForeignKeys, bool autoConverted)
+{
+	CreateSinglePlacementTableOnLocalNode(relationId, INVALID_COLOCATION_ID,
+										  cascadeViaForeignKeys, autoConverted);
+}
+
+
+/*
+ * CreateSinglePlacementTableOnLocalNode is the internal method that creates a
+ * Citus table from the table with relationId. The created table would have the
+ * following properties:
  *  - it will have only one shard,
  *  - its distribution method will be DISTRIBUTE_BY_NONE,
  *  - its replication model will be REPLICATION_MODEL_STREAMING,
  *  - its replication factor will be set to 1.
  * Similar to reference tables, it has only 1 placement. In addition to that, that
  * single placement is only allowed to be on the coordinator.
+ *
+ * TODO: Update the comments that refer to Citus local tables.
+ * TODO: Rename the functions that CreateSinglePlacementTableOnLocalNode calls
+ *       and that refer to Citus local tables.
  */
-void
-CreateCitusLocalTable(Oid relationId, bool cascadeViaForeignKeys, bool autoConverted)
+static void
+CreateSinglePlacementTableOnLocalNode(Oid relationId, uint32 colocationId,
+									  bool cascadeViaForeignKeys, bool autoConverted)
 {
+	/*
+	 * INVALID_COLOCATION_ID means that we're creating a Citus local table and
+	 * those two options are only allowed for them.
+	 */
+	Assert(colocationId == INVALID_COLOCATION_ID ||
+		   (!cascadeViaForeignKeys && !autoConverted));
+
 	/*
 	 * These checks should be done before acquiring any locks on relation.
 	 * This is because we don't allow creating citus local tables in worker
@@ -381,7 +466,8 @@ CreateCitusLocalTable(Oid relationId, bool cascadeViaForeignKeys, bool autoConve
 	DropNextValExprsAndMoveOwnedSeqOwnerships(shardRelationId,
 											  shellRelationId);
 
-	InsertMetadataForCitusLocalTable(shellRelationId, shardId, autoConverted);
+	InsertMetadataForCitusLocalTable(shellRelationId, shardId, colocationId,
+									 autoConverted);
 
 	FinalizeCitusLocalTableCreation(shellRelationId);
 }
@@ -1397,7 +1483,7 @@ TransferSequenceOwnership(Oid sequenceId, Oid targetRelationId, char *targetColu
  */
 static void
 InsertMetadataForCitusLocalTable(Oid citusLocalTableId, uint64 shardId,
-								 bool autoConverted)
+								 uint32 colocationId, bool autoConverted)
 {
 	Assert(OidIsValid(citusLocalTableId));
 	Assert(shardId != INVALID_SHARD_ID);
@@ -1405,7 +1491,6 @@ InsertMetadataForCitusLocalTable(Oid citusLocalTableId, uint64 shardId,
 	char distributionMethod = DISTRIBUTE_BY_NONE;
 	char replicationModel = REPLICATION_MODEL_STREAMING;
 
-	uint32 colocationId = INVALID_COLOCATION_ID;
 	Var *distributionColumn = NULL;
 	InsertIntoPgDistPartition(citusLocalTableId, distributionMethod,
 							  distributionColumn, colocationId,
