@@ -3,9 +3,8 @@ ifndef DECODER
 endif
 
 MODULE_big = citus_$(DECODER)
+citus_subdir = src/backend/distributed/cdc
 citus_top_builddir = ../../../..
-
-.PHONY: clean-full install install-all
 
 OBJS += cdc_decoder.o cdc_decoder_utils.o
 

@@ -12,10 +12,12 @@
 #include "postgres.h"
 #include "access/genam.h"
 #include "catalog/pg_namespace.h"
+#include "catalog/pg_publication.h"
 #include "commands/extension.h"
 #include "common/hashfn.h"
-#include "utils/typcache.h"
 #include "utils/lsyscache.h"
+#include "utils/rel.h"
+#include "utils/typcache.h"
 
 PG_MODULE_MAGIC;
 
