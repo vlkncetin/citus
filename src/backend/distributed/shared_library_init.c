@@ -23,6 +23,7 @@
 
 #include "safe_lib.h"
 
+#include "distributed/smart_hint.h"
 #include "catalog/pg_authid.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_extension.h"
@@ -864,6 +865,16 @@ CreateRequiredDirectories(void)
 static void
 RegisterCitusConfigVariables(void)
 {
+    DefineCustomBoolVariable(
+        "citus.enable_hint_ai",
+        gettext_noop("Enables the hint AI."),
+        NULL,
+        &EnableHintAI,
+        false,
+        PGC_USERSET,
+        GUC_STANDARD,
+        NULL, NULL, NULL);
+
 	DefineCustomBoolVariable(
 		"citus.all_modifications_commutative",
 		gettext_noop("Bypasses commutativity checks when enabled"),
