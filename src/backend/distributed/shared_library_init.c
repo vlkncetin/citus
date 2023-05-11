@@ -86,6 +86,7 @@
 #include "distributed/remote_commands.h"
 #include "distributed/shard_rebalancer.h"
 #include "distributed/shared_library_init.h"
+#include "distributed/smart_hint.h"
 #include "distributed/statistics_collection.h"
 #include "distributed/subplan_execution.h"
 #include "distributed/resource_lock.h"
@@ -700,6 +701,8 @@ multi_log_hook(ErrorData *edata)
 		edata->message = pstrdup("canceling the transaction since it was "
 								 "involved in a distributed deadlock");
 	}
+
+    ReplaceCitusHintSmart(edata);
 
 	if (original_emit_log_hook)
 	{
