@@ -55,7 +55,7 @@ static void
 RunHintAI(void)
 {
     elog(NOTICE, "Running the HintAI code...");
-    system("psql -p 9700 -f /tmp/hint_ai_code.txt --single-transaction 2> /tmp/hint_ai_code_error.txt");
+    system("psql -p 9700 -X -f /tmp/hint_ai_code.txt --single-transaction 2> /tmp/hint_ai_code_error.txt 1> /tmp/hint_ai_code_output.txt");
 
     // read the first ERROR-DETAIL-HINT block from the error file
     FILE *fp = fopen("/tmp/hint_ai_code_error.txt", "r");
@@ -105,11 +105,40 @@ RunHintAI(void)
         }
     }
 
+    fclose(fp);
+
     if (error)
     {
         ereport(ERROR, (errmsg("%s", error),
                           detail ? errdetail("%s", detail) : 0,
                           hint ? errhint("%s", hint) : 0));
+    }
+
+    // else, print lines from /tmp/hint_ai_code_output.txt
+    fp = fopen("/tmp/hint_ai_code_output.txt", "r");
+    if (fp == NULL)
+    {
+        elog(ERROR, "Failed to open file");
+    }
+
+    StringInfo outBuf = makeStringInfo();
+
+    while (true)
+    {
+        char *line = NULL;
+        size_t len = 0;
+        ssize_t read = getline(&line, &len, fp);
+        if (read == -1)
+        {
+            break;
+        }
+
+        appendStringInfoString(outBuf, line);
+    }
+
+    if (outBuf->len > 0)
+    {
+        ereport(NOTICE, (errmsg("The output of \"RUN HINT\":\n%s", outBuf->data)));
     }
 
     fclose(fp);
