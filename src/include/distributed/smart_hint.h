@@ -6,6 +6,6 @@
 
 extern bool EnableHintAI;
 
-extern void ReplaceCitusHintSmart(ErrorData *edata);
+extern bool ReplaceCitusHintSmart(ErrorData *edata);
 
 #endif /* DISTRIBUTED_SMART_HINT_H */

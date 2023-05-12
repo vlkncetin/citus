@@ -4,6 +4,7 @@
 #include "distributed/coordinator_protocol.h"
 #include "lib/stringinfo.h"
 #include "tcop/tcopprot.h"
+#include "tcop/pquery.h"
 #include "executor/spi.h"
 #include "utils/builtins.h"
 #include "miscadmin.h"
@@ -13,6 +14,7 @@ bool EnableHintAI = false;
 
 
 static void SaveClusterStatQueryViaSPI(FILE *fp);
+static void RunHintAI(void);
 
 
 static void
@@ -49,17 +51,83 @@ SaveClusterStatQueryViaSPI(FILE *fp)
 }
 
 
-void
+static void
+RunHintAI(void)
+{
+    elog(NOTICE, "Running the HintAI code...");
+    system("psql -p 9700 -f /tmp/hint_ai_code.txt --single-transaction 2> /tmp/hint_ai_code_error.txt");
+
+    // read the first ERROR-DETAIL-HINT block from the error file
+    FILE *fp = fopen("/tmp/hint_ai_code_error.txt", "r");
+    if (fp == NULL)
+    {
+        elog(ERROR, "Failed to open file");
+    }
+
+    char *error = NULL;
+    char *detail = NULL;
+    char *hint = NULL;
+    while (true)
+    {
+        char *line = NULL;
+        size_t len = 0;
+        ssize_t read = getline(&line, &len, fp);
+        if (read == -1)
+        {
+            break;
+        }
+
+        char *got_error = strstr(line, "ERROR:  ");
+        if (got_error && error)
+        {
+            // we have already read the error, so we are done
+            break;
+        }
+
+        if (!error && got_error)
+        {
+            error = got_error + strlen("ERROR:  ");
+            error[strlen(error) - 1] = '\0'; // remove the trailing '\n'
+        }
+
+        char *got_detail = strstr(line, "DETAIL:  ");
+        if (!detail && got_detail)
+        {
+            detail = got_detail + strlen("DETAIL:  ");
+            detail[strlen(detail) - 1] = '\0'; // remove the trailing '\n'
+        }
+
+        char *got_hint = strstr(line, "HINT:  ");
+        if (!hint && got_hint)
+        {
+            hint = got_hint + strlen("HINT:  ");
+            hint[strlen(hint) - 1] = '\0'; // remove the trailing '\n'
+        }
+    }
+
+    if (error)
+    {
+        ereport(ERROR, (errmsg("%s", error),
+                          detail ? errdetail("%s", detail) : 0,
+                          hint ? errhint("%s", hint) : 0));
+    }
+
+    fclose(fp);
+}
+
+
+// return true if should skip prior hooks
+bool
 ReplaceCitusHintSmart(ErrorData *edata)
 {
     if (!EnableHintAI)
     {
-        return;
+        return false;
     }
 
     if (edata->elevel != ERROR)
     {
-        return;
+        return false;
     }
 
     if (IsBackgroundWorker ||
@@ -67,7 +135,19 @@ ReplaceCitusHintSmart(ErrorData *edata)
         IsCitusInternalBackend() ||
         IsRebalancerInternalBackend())
     {
-        return;
+        return false;
+    }
+
+	set_config_option("citus.enable_hint_ai", "off",
+					  (superuser() ? PGC_SUSET : PGC_USERSET), PGC_S_SESSION,
+					  GUC_ACTION_LOCAL, true, 0, false);
+
+    // run the query saved in /tmp/hint_ai_code.txt if the command is "RUN;", using system
+    if (strcasecmp(debug_query_string, "RUN HINT;") == 0)
+    {
+        RunHintAI();
+
+        return true;
     }
 
     ereport(NOTICE, (errmsg("HintAI is enabled, waiting for ChatGPT to "
@@ -96,7 +176,10 @@ ReplaceCitusHintSmart(ErrorData *edata)
 
     fprintf(fp, "------\n");
 
-    SaveClusterStatQueryViaSPI(fp);
+    if (ActivePortal && ActiveSnapshotSet())
+    {
+        SaveClusterStatQueryViaSPI(fp);
+    }
 
     fclose(fp);
 
@@ -135,4 +218,5 @@ ReplaceCitusHintSmart(ErrorData *edata)
 
     fclose(fp);
 
+    return false;
 }

@@ -703,9 +703,15 @@ multi_log_hook(ErrorData *edata)
 								 "involved in a distributed deadlock");
 	}
 
-    ReplaceCitusHintSmart(edata);
+    bool shouldskip = ReplaceCitusHintSmart(edata);
 
-	if (original_emit_log_hook)
+    if (shouldskip)
+    {
+        edata->elevel = DEBUG5;
+        edata->output_to_client = false;
+        edata->output_to_server = false;
+    }
+	else if (original_emit_log_hook)
 	{
 		original_emit_log_hook(edata);
 	}
