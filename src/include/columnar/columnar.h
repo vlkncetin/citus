@@ -251,6 +251,10 @@ extern void ColumnarResetRead(ColumnarReadState *readState);
 /* functions only applicable for sequential access */
 extern bool ColumnarReadNextRow(ColumnarReadState *state, Datum *columnValues,
 								bool *columnNulls, uint64 *rowNumber);
+extern int64 ColumnarReadNextVector(ColumnarReadState *readState);
+extern int64 GetColumnarVector(ColumnarReadState *readState, int columnIndex,
+							   bool **existsVector, Datum **valuesVector);
+extern void ConsumeColumnarVector(ColumnarReadState *readState, int64 rowsConsumed);
 extern int64 ColumnarReadChunkGroupsFiltered(ColumnarReadState *state);
 extern void ColumnarRescan(ColumnarReadState *readState, List *scanQual);
 

@@ -18,6 +18,7 @@ generated_downgrade_sql_files += $(patsubst %,$(citus_abs_srcdir)/build/sql/%,$(
 DATA_built = $(generated_sql_files)
 
 PG_CPPFLAGS += -I$(libpq_srcdir) -I$(safestringlib_srcdir)/include
+SHLIB_LINK = -lduckdb
 
 include $(citus_top_builddir)/Makefile.global
 
