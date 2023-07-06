@@ -485,7 +485,7 @@ _PG_init(void)
 	InitializeConnectionManagement();
 	InitPlacementConnectionManagement();
 	InitRelationAccessHash();
-	InitTxDistObjectContextAndHash();
+	InitDistObjectContext();
 	InitializeCitusQueryStats();
 	InitializeSharedConnectionStats();
 	InitializeLocallyReservedSharedConnections();
