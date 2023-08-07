@@ -29,7 +29,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: ${{ needs.set-image-names.outputs.build_image }}
+      image: ${{ needs.set-image-names.outputs.build_imageX }}
     steps:
     - run: echo "${{ needs.set-image-names.outputs.build_image }}"
     - uses: actions/checkout@v3.5.0
