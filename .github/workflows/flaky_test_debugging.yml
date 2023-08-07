@@ -12,7 +12,7 @@ on:
 env:
   image_suffix: -vbab548a
   pg15_version: 15.3
-  pg_major: 15
+  PG_MAJOR: 15
   build_image_name: citus/extbuilder
   test_image_name: citus/failtester
 jobs:
@@ -31,6 +31,7 @@ jobs:
     container:
       image: ${{ needs.set-image-names.outputs.build_image }}
     steps:
+    - run: echo "${{ needs.set-image-names.outputs.build_image }}"
     - uses: actions/checkout@v3.5.0
     - name: Configure, Build, and Install
       run: "./ci/build-citus.sh"
