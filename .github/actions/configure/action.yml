@@ -4,6 +4,5 @@ runs:
   steps:
   - name: Configure
     run: |-
-      chown -R circleci .
-      gosu circleci ./configure --without-pg-version-check
+      ./configure --without-pg-version-check
     shell: bash
