@@ -7,7 +7,8 @@ runs:
   steps:
   - name: Generate parallelization matrix
     id: generate_matrix
-    run: |
+    shell: bash
+    run: |-
       json_array="{id: ["
       for ((i = 1; i <= ${{ inputs.count }}; i++)); do
           json_array+=" $i,"
