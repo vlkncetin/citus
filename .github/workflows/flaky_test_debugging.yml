@@ -61,7 +61,7 @@ jobs:
       image: ${{ needs.set_image_names.outputs.test_image }}
       options: --user root
     needs:
-    - build
+      [build, prepare_parallelization_matrix]
     env:
       test: "${{ inputs.flaky_test }}"
       runs: "${{ inputs.flaky_test_runs_per_job }}"

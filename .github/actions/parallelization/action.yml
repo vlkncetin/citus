@@ -17,4 +17,4 @@ runs:
       json_array+=" ]}"
       echo "json=$json_array" >> "$GITHUB_OUTPUT"
 outputs:
-    json: ${{ steps.generate_matrix.outputs.json }}}
+  json: ${{ steps.generate_matrix.outputs.json }}}
