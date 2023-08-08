@@ -20,21 +20,19 @@ jobs:
     name: set-image-names
     runs-on: ubuntu-latest
     outputs:
-      build_image: ${{ steps.set-build-image-name.outputs.image }}
-      test_image: ${{ steps.set-test-image-name.outputs.image }}
+      build-image: ${{ steps.set-build-image-name.outputs.image }}
+      test-image: ${{ steps.set-test-image-name.outputs.image }}
     steps:
     - id: set-build-image-name
-      run: |
-        echo "image=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
+      run: echo "image=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
     - id: set-test-image-name
-      run: |
-        echo "image=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
+      run: echo "image=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
   build:
     runs-on: ubuntu-latest
     container:
-      image: ${{ needs.set-image-names.outputs.build_image }}
+      image: ${{ needs.set-image-names.outputs.build-image }}
     steps:
-    - run: echo "${{ needs.set-image-names.outputs.build_image }}"
+    - run: echo "${{ needs.set-image-names.outputs.build-image }}"
     - uses: actions/checkout@v3.5.0
     - name: Configure, Build, and Install
       run: "./ci/build-citus.sh"
@@ -51,9 +49,9 @@ jobs:
       output2: ${{ steps.step2.outputs.test }}
     steps:
       - id: step1
-        run: echo "test=hello" >> "$GITHUB_OUTPUT"
+        run: echo "test=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
       - id: step2
-        run: echo "test=world" >> "$GITHUB_OUTPUT"
+        run: echo "test=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
   job2:
     runs-on: ubuntu-latest
     needs: job1
