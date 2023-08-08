@@ -49,6 +49,7 @@ jobs:
     outputs:
       json: ${{ steps.parallelization.outputs.json }}
     steps:
+      - uses: actions/checkout@v3.5.0
       - uses: "./.github/actions/parallelization"
         id: parallelization
         with:
