@@ -5,16 +5,16 @@ inputs:
 runs:
   using: composite
   steps:
-  - name: Generate parallelization matrix
-    id: generate_matrix
-    shell: bash
-    run: |-
-      json_array="{id: ["
-      for ((i = 1; i <= ${{ inputs.count }}; i++)); do
-          json_array+=" $i,"
-      done
-      json_array=${json_array%,}  # Remove the trailing comma
-      json_array+=" ]}"
-      echo "json=$json_array" >> "$GITHUB_OUTPUT"
+    - name: Generate parallelization matrix
+      id: generate_matrix
+      shell: bash
+      run: |-
+        json_array="{id: ["
+        for ((i = 1; i <= ${{ inputs.count }}; i++)); do
+            json_array+=" $i,"
+        done
+        json_array=${json_array%,}  # Remove the trailing comma
+        json_array+=" ]}"
+        echo "json=$json_array" >> "$GITHUB_OUTPUT"
 outputs:
   json: ${{ steps.generate_matrix.outputs.json }}
