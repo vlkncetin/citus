@@ -48,7 +48,7 @@ jobs:
     if: ${{ inputs.flaky_test }}
     runs-on: ubuntu-latest
     container:
-      image: ${{ needs.set_image_names.outputs.test_image }}
+      image: ${{ needs.set_image_names.outputs.build_image }}
       options: --user root
     needs:
     - build
