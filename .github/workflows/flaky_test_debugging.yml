@@ -16,31 +16,6 @@ env:
   build_image_name: citus/extbuilder
   test_image_name: citus/failtester
 jobs:
-  set-image-names:
-    name: set-image-names
-    runs-on: ubuntu-latest
-    outputs:
-      build-image: ${{ steps.set-build-image-name.outputs.image }}
-      test-image: ${{ steps.set-test-image-name.outputs.image }}
-    steps:
-    - id: set-build-image-name
-      run: echo "image=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
-    - id: set-test-image-name
-      run: echo "image=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
-  build:
-    runs-on: ubuntu-latest
-    container:
-      image: ${{ needs.set-image-names.outputs.build-image }}
-    steps:
-    - run: echo "${{ needs.set-image-names.outputs.build-image }}"
-    - uses: actions/checkout@v3.5.0
-    - name: Configure, Build, and Install
-      run: "./ci/build-citus.sh"
-    - uses: actions/upload-artifact@v3.1.1
-      with:
-        path: |-
-          ./build-${{ env.pg_major }}/*
-          ./install-${{ env.pg_major }}.tar
   job1:
     runs-on: ubuntu-latest
     # Map a step output to a job output
@@ -52,6 +27,21 @@ jobs:
         run: echo "test=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
       - id: step2
         run: echo "test=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{needs.job1.outputs.output1}}
+    steps:
+    - run: echo "${{needs.job1.outputs.output1}}"
+    - uses: actions/checkout@v3.5.0
+    - name: Configure, Build, and Install
+      run: "./ci/build-citus.sh"
+    - uses: actions/upload-artifact@v3.1.1
+      with:
+        path: |-
+          ./build-${{ env.pg_major }}/*
+          ./install-${{ env.pg_major }}.tar
+
   job2:
     runs-on: ubuntu-latest
     needs: job1
