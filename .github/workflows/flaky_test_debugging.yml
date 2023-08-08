@@ -49,6 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ${{ needs.set_image_names.outputs.test_image }}
+      options: --user root
     needs:
     - build
     env:
