@@ -44,7 +44,7 @@ jobs:
         path: |-
           ./build-${{ env.pg_major }}/*
           ./install-${{ env.pg_major }}.tar
-  test-flakyness:
+  test_flakyness:
     if: ${{ inputs.flaky_test }}
     runs-on: ubuntu-latest
     container:
