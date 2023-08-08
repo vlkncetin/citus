@@ -1,0 +1,13 @@
+name: Parallelization matrix
+inputs:
+  count:
+    required: true
+runs:
+  using: composite
+  steps:
+  - name: Generate parallelization matrix
+    id: generate_matrix
+    run: |
+      echo "json={id:[1,2,3,4,5]}" >> "$GITHUB_OUTPUT"
+outputs:
+    json: ${{ steps.generate_matrix.outputs.json }}}

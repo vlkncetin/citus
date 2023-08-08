@@ -44,11 +44,20 @@ jobs:
         path: |-
           ./build-${{ env.pg_major }}/*
           ./install-${{ env.pg_major }}.tar
+  prepare_parallelization_matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      json: ${{ steps.parallelization.outputs.json }}
+    steps:
+      - uses: "./.github/actions/parallelization"
+        id: parallelization
+        with:
+          count: 10
   test_flakyness:
     if: ${{ inputs.flaky_test }}
     runs-on: ubuntu-latest
     container:
-      image: ${{ needs.set_image_names.outputs.build_image }}
+      image: ${{ needs.set_image_names.outputs.test_image }}
       options: --user root
     needs:
     - build
@@ -56,6 +65,10 @@ jobs:
       test: "${{ inputs.flaky_test }}"
       runs: "${{ inputs.flaky_test_runs_per_job }}"
       skip: false
+    strategy:
+      fail-fast: true
+      matrix:
+        include: ${{ fromJson(needs.prepare_parallelization_matrix.outputs.json) }}
     steps:
     - uses: actions/checkout@v3.5.0
     - uses: actions/download-artifact@v3.0.1
