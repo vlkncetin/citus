@@ -2,10 +2,10 @@ name: citusdata/citus/flaky_test_debugging
 on:
   workflow_dispatch:
     inputs:
-      flaky-test:
+      flaky_test:
         required: true
         type: string
-      flaky-test-runs-per-job:
+      flaky_test_runs_per_job:
         required: false
         default: 50
         type: number
@@ -16,24 +16,25 @@ env:
   build_image_name: citus/extbuilder
   test_image_name: citus/failtester
 jobs:
-  job1:
+  set_image_names:
+    name: set_image_names
     runs-on: ubuntu-latest
-    # Map a step output to a job output
     outputs:
-      output1: ${{ steps.step1.outputs.test }}
-      output2: ${{ steps.step2.outputs.test }}
+      build_image: ${{ steps.set_build_image_name.outputs.image }}
+      test_image: ${{ steps.set_test_image_name.outputs.image }}
     steps:
-      - id: step1
-        run: echo "test=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
-      - id: step2
-        run: echo "test=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
+    - id: set_build_image_name
+      run: |
+        echo "image=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
+    - id: set_test_image_name
+      run: |
+        echo "image=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
   build:
     runs-on: ubuntu-latest
-    needs: job1
+    needs: set_image_names
     container:
-      image: ${{needs.job1.outputs.output1}}
+      image: ${{ needs.set_image_names.outputs.build_image }}
     steps:
-    - run: echo "${{needs.job1.outputs.output1}}"
     - uses: actions/checkout@v3.5.0
     - name: Configure, Build, and Install
       run: "./ci/build-citus.sh"
@@ -42,28 +43,16 @@ jobs:
         path: |-
           ./build-${{ env.pg_major }}/*
           ./install-${{ env.pg_major }}.tar
-
-  job2:
-    runs-on: ubuntu-latest
-    needs: job1
-    steps:
-      - env:
-          OUTPUT1: ${{needs.job1.outputs.output1}}
-          OUTPUT2: ${{needs.job1.outputs.output2}}
-        run: |
-         echo "$OUTPUT1 $OUTPUT2"
-         echo "${{needs.job1.outputs.output1}}"
-         echo "${{needs.job1.outputs.output2}}"
   test-flakyness:
-    if: ${{ inputs.flaky-test }}
+    if: ${{ inputs.flaky_test }}
     runs-on: ubuntu-latest
     container:
-      image: ${{ needs.set-image-names.outputs.test_image }}
+      image: ${{ needs.set_image_names.outputs.test_image }}
     needs:
     - build
     env:
-      test: "${{ inputs.flaky-test }}"
-      runs: "${{ inputs.flaky-test-runs-per-job }}"
+      test: "${{ inputs.flaky_test }}"
+      runs: "${{ inputs.flaky_test_runs_per_job }}"
       skip: false
     steps:
     - uses: actions/checkout@v3.5.0
