@@ -15,7 +15,7 @@ runs:
       run: |-
         json_array="{\"include\":"
         for ((i = 1; i <= ${{ inputs.count }}; i++)); do
-            json_array+= "[{\"id\":\"$i\"},"
+            json_array+= "[{\"id\":\"$i\"}],"
         done
         json_array=${json_array%,}
         json_array+=" ]}"
