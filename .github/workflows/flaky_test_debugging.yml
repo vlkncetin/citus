@@ -17,23 +17,24 @@ env:
   test_image_name: citus/failtester
 jobs:
   set-image-names:
+    name: set-image-names
     runs-on: ubuntu-latest
     steps:
-      - id: set-build-image-name
-        run: |
-          echo "image=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
-          echo "image=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}"
-      - id: set-test-image-name
-        run: |
-          echo "image=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
-          echo "image=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}"
+    - id: set-build-image-name
+      run: |
+        echo "image=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
+        echo "image=${{ env.build_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}"
+    - id: set-test-image-name
+      run: |
+        echo "image=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}" >> "$GITHUB_OUTPUT"
+        echo "image=${{ env.test_image_name }}:${{ env.pg15_version  }}${{ env.image_suffix }}"
     outputs:
       build_image: ${{ steps.set-build-image-name.outputs.image }}
       test_image: ${{ steps.set-test-image-name.outputs.image }}
   build:
     runs-on: ubuntu-latest
     container:
-      image: ${{ needs.set-image-names.outputs.build_imageX }}
+      image: ${{ needs.set-image-names.outputs.build_image }}
     steps:
     - run: echo "${{ needs.set-image-names.outputs.build_image }}"
     - uses: actions/checkout@v3.5.0
