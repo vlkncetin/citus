@@ -61,7 +61,7 @@ jobs:
       image: ${{ needs.set_image_names.outputs.test_image }}
       options: --user root
     needs:
-      [prepare_parallelization_matrix] #build,
+      [build, prepare_parallelization_matrix]
     env:
       test: "${{ inputs.flaky_test }}"
       runs: "${{ inputs.flaky_test_runs_per_job }}"
@@ -96,6 +96,7 @@ jobs:
       with:
         pg_major: "${{ env.pg_major }}"
     - run: less /etc/passwd
+      if: always()
     - uses: "./.github/actions/configure"
     - run: cat config.log
       if: always()
