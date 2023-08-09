@@ -95,7 +95,9 @@ jobs:
     - uses: "./.github/actions/install_extension"
       with:
         pg_major: "${{ env.pg_major }}"
-    - run: less /etc/passwd
+    - run: |
+        whoami
+        less /etc/passwd
       if: always()
     - uses: "./.github/actions/configure"
     - run: cat config.log
