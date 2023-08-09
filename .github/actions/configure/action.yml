@@ -4,5 +4,6 @@ runs:
   steps:
   - name: Configure
     run: |-
+      chown -R runner .
       sudo ./configure --without-pg-version-check
     shell: bash
