@@ -32,6 +32,7 @@
 #include "distributed/coordinator_protocol.h"
 #include "distributed/metadata_cache.h"
 #include "distributed/metadata_sync.h"
+#include "distributed/multi_executor.h"
 #include "distributed/multi_join_order.h"
 #include "distributed/multi_logical_replication.h"
 #include "distributed/multi_partitioning_utils.h"
@@ -42,6 +43,7 @@
 #include "distributed/shard_rebalancer.h"
 #include "distributed/shard_split.h"
 #include "distributed/shard_transfer.h"
+#include "distributed/tuple_destination.h"
 #include "distributed/worker_manager.h"
 #include "distributed/worker_protocol.h"
 #include "distributed/worker_transaction.h"
@@ -74,24 +76,28 @@ static const char *ShardTransferTypeNames[] = {
 	[SHARD_TRANSFER_INVALID_FIRST] = "unknown",
 	[SHARD_TRANSFER_MOVE] = "move",
 	[SHARD_TRANSFER_COPY] = "copy",
+	[SHARD_TRANSFER_MOVE_CITUS_LOCAL_INTERNAL] = "move",
 };
 
 static const char *ShardTransferTypeNamesCapitalized[] = {
 	[SHARD_TRANSFER_INVALID_FIRST] = "unknown",
 	[SHARD_TRANSFER_MOVE] = "Move",
 	[SHARD_TRANSFER_COPY] = "Copy",
+	[SHARD_TRANSFER_MOVE_CITUS_LOCAL_INTERNAL] = "Move",
 };
 
 static const char *ShardTransferTypeNamesContinuous[] = {
 	[SHARD_TRANSFER_INVALID_FIRST] = "unknown",
 	[SHARD_TRANSFER_MOVE] = "Moving",
 	[SHARD_TRANSFER_COPY] = "Copying",
+	[SHARD_TRANSFER_MOVE_CITUS_LOCAL_INTERNAL] = "Moving",
 };
 
 static const char *ShardTransferTypeFunctionNames[] = {
 	[SHARD_TRANSFER_INVALID_FIRST] = "unknown",
 	[SHARD_TRANSFER_MOVE] = "citus_move_shard_placement",
 	[SHARD_TRANSFER_COPY] = "citus_copy_shard_placement",
+	[SHARD_TRANSFER_MOVE_CITUS_LOCAL_INTERNAL] = "citus_move_shard_placement",
 };
 
 /* local function forward declarations */
@@ -127,6 +133,7 @@ static void DropShardPlacementsFromMetadata(List *shardList,
 											char *nodeName,
 											int32 nodePort);
 static void UpdateColocatedShardPlacementMetadataOnWorkers(int64 shardId,
+														   List *colocatedShardList,
 														   char *sourceNodeName,
 														   int32 sourceNodePort,
 														   char *targetNodeName,
@@ -141,6 +148,7 @@ static void SetupRebalanceMonitorForShardTransfer(uint64 shardId, Oid distribute
 												  ShardTransferType transferType);
 static void CheckSpaceConstraints(MultiConnection *connection,
 								  uint64 colocationSizeInBytes);
+static int64 RunGenericRebalancerQuery(List *shardIntervalList, char *command);
 static void EnsureAllShardsCanBeCopied(List *colocatedShardList,
 									   char *sourceNodeName, uint32 sourceNodePort,
 									   char *targetNodeName, uint32 targetNodePort);
@@ -361,7 +369,7 @@ TransferShards(int64 shardId, char *sourceNodeName,
 	Oid distributedTableId = shardInterval->relationId;
 
 	/* error if unsupported shard transfer */
-	if (transferType == SHARD_TRANSFER_MOVE)
+	if (IsShardTransferTypeMove(transferType))
 	{
 		ErrorIfMoveUnsupportedTableType(distributedTableId);
 	}
@@ -375,12 +383,24 @@ TransferShards(int64 shardId, char *sourceNodeName,
 
 	AcquirePlacementColocationLock(distributedTableId, ExclusiveLock, operationName);
 
-	List *colocatedTableList = ColocatedTableList(distributedTableId);
-	List *colocatedShardList = ColocatedShardIntervalList(shardInterval);
+	/*
+	 * When moving shard of a Citus local table to a remote node to make it
+	 * a single-shard table, we need to ignore the tables that are said to be
+	 * colocated with it. This is because, the tables that are claimed to be
+	 * colocated with it by metadata are not actually colocated with it.
+	 */
+	List *colocatedTableList =
+		transferType == SHARD_TRANSFER_MOVE_CITUS_LOCAL_INTERNAL ?
+		list_make1_oid(distributedTableId) :
+		ColocatedTableList(distributedTableId);
+	List *colocatedShardList =
+		transferType == SHARD_TRANSFER_MOVE_CITUS_LOCAL_INTERNAL ?
+		list_make1(CopyShardInterval(shardInterval)) :
+		ColocatedShardIntervalList(shardInterval);
 
 	EnsureTableListOwner(colocatedTableList);
 
-	if (transferType == SHARD_TRANSFER_MOVE)
+	if (IsShardTransferTypeMove(transferType))
 	{
 		/*
 		 * Block concurrent DDL / TRUNCATE commands on the relation. Similarly,
@@ -450,7 +470,7 @@ TransferShards(int64 shardId, char *sourceNodeName,
 	{
 		BlockWritesToShardList(colocatedShardList);
 	}
-	else if (transferType == SHARD_TRANSFER_MOVE)
+	else if (IsShardTransferTypeMove(transferType))
 	{
 		/*
 		 * We prevent multiple shard moves in a transaction that use logical
@@ -505,7 +525,7 @@ TransferShards(int64 shardId, char *sourceNodeName,
 	CopyShardTables(colocatedShardList, sourceNodeName, sourceNodePort, targetNodeName,
 					targetNodePort, useLogicalReplication, operationFunctionName);
 
-	if (transferType == SHARD_TRANSFER_MOVE)
+	if (IsShardTransferTypeMove(transferType))
 	{
 		/* delete old shards metadata and mark the shards as to be deferred drop */
 		int32 sourceGroupId = GroupForNode(sourceNodeName, sourceNodePort);
@@ -538,7 +558,7 @@ TransferShards(int64 shardId, char *sourceNodeName,
 		}
 	}
 
-	if (transferType == SHARD_TRANSFER_MOVE)
+	if (IsShardTransferTypeMove(transferType))
 	{
 		/*
 		 * Since this is move operation, we remove the placements from the metadata
@@ -547,9 +567,10 @@ TransferShards(int64 shardId, char *sourceNodeName,
 		DropShardPlacementsFromMetadata(colocatedShardList,
 										sourceNodeName, sourceNodePort);
 
-		UpdateColocatedShardPlacementMetadataOnWorkers(shardId, sourceNodeName,
-													   sourceNodePort, targetNodeName,
-													   targetNodePort);
+		UpdateColocatedShardPlacementMetadataOnWorkers(shardId,
+													   colocatedShardList,
+													   sourceNodeName, sourceNodePort,
+													   targetNodeName, targetNodePort);
 	}
 
 	UpdatePlacementUpdateStatusForShardIntervalList(
@@ -738,7 +759,7 @@ EnsureEnoughDiskSpaceForShardMove(List *colocatedShardList,
 								  char *targetNodeName, uint32 targetNodePort,
 								  ShardTransferType transferType)
 {
-	if (!CheckAvailableSpaceBeforeMove || transferType != SHARD_TRANSFER_MOVE)
+	if (!CheckAvailableSpaceBeforeMove || !IsShardTransferTypeMove(transferType))
 	{
 		return;
 	}
@@ -763,7 +784,7 @@ TransferAlreadyCompleted(List *colocatedShardList,
 						 char *targetNodeName, uint32 targetNodePort,
 						 ShardTransferType transferType)
 {
-	if (transferType == SHARD_TRANSFER_MOVE &&
+	if (IsShardTransferTypeMove(transferType) &&
 		IsShardListOnNode(colocatedShardList, targetNodeName, targetNodePort) &&
 		!IsShardListOnNode(colocatedShardList, sourceNodeName, sourceNodePort))
 	{
@@ -788,42 +809,13 @@ uint64
 ShardListSizeInBytes(List *shardList, char *workerNodeName, uint32
 					 workerNodePort)
 {
-	uint32 connectionFlag = 0;
-
 	/* we skip child tables of a partitioned table if this boolean variable is true */
 	bool optimizePartitionCalculations = true;
 	StringInfo tableSizeQuery = GenerateSizeQueryOnMultiplePlacements(shardList,
 																	  TOTAL_RELATION_SIZE,
 																	  optimizePartitionCalculations);
 
-	MultiConnection *connection = GetNodeConnection(connectionFlag, workerNodeName,
-													workerNodePort);
-	PGresult *result = NULL;
-	int queryResult = ExecuteOptionalRemoteCommand(connection, tableSizeQuery->data,
-												   &result);
-
-	if (queryResult != RESPONSE_OKAY)
-	{
-		ereport(ERROR, (errcode(ERRCODE_CONNECTION_FAILURE),
-						errmsg("cannot get the size because of a connection error")));
-	}
-
-	List *sizeList = ReadFirstColumnAsText(result);
-	if (list_length(sizeList) != 1)
-	{
-		ereport(ERROR, (errmsg(
-							"received wrong number of rows from worker, expected 1 received %d",
-							list_length(sizeList))));
-	}
-
-	StringInfo totalSizeStringInfo = (StringInfo) linitial(sizeList);
-	char *totalSizeString = totalSizeStringInfo->data;
-	uint64 totalSize = SafeStringToUint64(totalSizeString);
-
-	PQclear(result);
-	ForgetResults(connection);
-
-	return totalSize;
+    return RunGenericRebalancerQuery(shardList, tableSizeQuery->data);
 }
 
 
@@ -839,7 +831,8 @@ SetupRebalanceMonitorForShardTransfer(uint64 shardId, Oid distributedTableId,
 									  char *targetNodeName, uint32 targetNodePort,
 									  ShardTransferType transferType)
 {
-	if (transferType == SHARD_TRANSFER_MOVE && IsRebalancerInternalBackend())
+	if ((transferType == SHARD_TRANSFER_MOVE && IsRebalancerInternalBackend()) ||
+		transferType == SHARD_TRANSFER_MOVE_CITUS_LOCAL_INTERNAL)
 	{
 		/*
 		 * We want to be able to track progress of shard moves using
@@ -916,6 +909,75 @@ CheckSpaceConstraints(MultiConnection *connection, uint64 colocationSizeInBytes)
 }
 
 
+static int64
+RunGenericRebalancerQuery(List *shardIntervalList, char *command)
+{
+    uint64 shardId = ((ShardInterval *) linitial(shardIntervalList))->shardId;
+
+    Task *task = CitusMakeNode(Task);
+    task->jobId = INVALID_JOB_ID;
+    task->taskId = 1;
+    task->taskType = READ_TASK;
+    SetTaskQueryString(task, command);
+    task->dependentTaskList = NULL;
+    task->replicationModel = REPLICATION_MODEL_INVALID;
+    task->anchorShardId = shardId;
+    task->taskPlacementList = ShardPlacementList(shardId);
+    Assert(list_length(task->taskPlacementList) == 1);
+
+
+    bool randomAccess = true;
+    bool interTransactions = false;
+    bool expectResults = true;
+
+
+	TupleDesc tupleDescriptor = CreateTemplateTupleDesc(1);
+	TupleDescInitEntry(tupleDescriptor, (AttrNumber) 1, NULL,
+					   NUMERICOID, -1, 0);
+
+
+    Tuplestorestate *tuplestorestate =
+        tuplestore_begin_heap(randomAccess, interTransactions, work_mem);
+    TupleDestination *tupleDest = CreateTupleStoreTupleDest(
+        tuplestorestate, tupleDescriptor);
+    uint64 rowsReturned = ExecuteTaskListIntoTupleDest(ROW_MODIFY_READONLY,
+                                                        list_make1(task), tupleDest,
+                                                        expectResults);
+    if (rowsReturned != 1)
+    {
+        ereport(ERROR, (errmsg("shard-size query returned unexpected number of rows")));
+    }
+
+    // read the result
+    tuplestore_rescan(tuplestorestate);
+
+    TupleTableSlot *slot = MakeSingleTupleTableSlot(tupleDescriptor, &TTSOpsMinimalTuple);
+    bool gotTuple = tuplestore_gettupleslot(tuplestorestate, true, false, slot);
+    if (!gotTuple)
+    {
+        ereport(ERROR, (errmsg("could not read result of shard-size query")));
+    }
+
+    bool isNull = false;
+    Datum resultDatum = slot_getattr(slot, 1, &isNull);
+    Assert(!isNull);
+    if (isNull)
+    {
+        ereport(ERROR, (errmsg("shard-size query unexpectedly returned NULL value")));
+    }
+
+    int64 result = (double) DatumGetFloat8(
+        DirectFunctionCall1(numeric_float8_no_overflow,resultDatum)
+    );
+
+    ExecDropSingleTupleTableSlot(slot);
+
+    tuplestore_end(tuplestorestate);
+
+	return result;
+}
+
+
 /*
  * ErrorIfTargetNodeIsNotSafeForTransfer throws error if the target node is not
  * eligible for shard transfers.
@@ -945,7 +1007,7 @@ ErrorIfTargetNodeIsNotSafeForTransfer(const char *targetNodeName, int targetNode
 							targetNodeName, targetNodePort)));
 	}
 
-	if (transferType == SHARD_TRANSFER_MOVE && !workerNode->shouldHaveShards)
+	if (IsShardTransferTypeMove(transferType) && !workerNode->shouldHaveShards)
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg("Moving shards to a node that shouldn't have a shard is "
@@ -1209,10 +1271,19 @@ ErrorIfTableCannotBeReplicated(Oid relationId)
 		return;
 	}
 
+	/*
+	 * In some cases (e.g., when creating a reference table from a Citus local
+	 * table), below checks might fail for a rebalancer backend even if the
+	 * original backend adjusted the metadata correctly. This is because, metadata
+	 * changes are not visible to rebalancer backends until the next transaction.
+	 *
+	 * For this reason, we skip below check for rebalancer backends.
+	 */
 	CitusTableCacheEntry *tableEntry = GetCitusTableCacheEntry(relationId);
 	char *relationName = get_rel_name(relationId);
 
-	if (IsCitusTableTypeCacheEntry(tableEntry, CITUS_LOCAL_TABLE))
+	if (!IsRebalancerInternalBackend() &&
+		IsCitusTableTypeCacheEntry(tableEntry, CITUS_LOCAL_TABLE))
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						(errmsg("Table %s is a local table. Replicating "
@@ -1579,22 +1650,22 @@ CopyShardsToNode(WorkerNode *sourceNode, WorkerNode *targetNode, List *shardInte
 
 		List *ddlCommandList = NIL;
 
-		/*
-		 * This uses repeatable read because we want to read the table in
-		 * the state exactly as it was when the snapshot was created. This
-		 * is needed when using this code for the initial data copy when
-		 * using logical replication. The logical replication catchup might
-		 * fail otherwise, because some of the updates that it needs to do
-		 * have already been applied on the target.
-		 */
-		StringInfo beginTransaction = makeStringInfo();
-		appendStringInfo(beginTransaction,
-						 "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;");
-		ddlCommandList = lappend(ddlCommandList, beginTransaction->data);
-
 		/* Set snapshot for non-blocking shard split. */
 		if (snapshotName != NULL)
 		{
+    		/*
+    		 * This uses repeatable read because we want to read the table in
+    		 * the state exactly as it was when the snapshot was created. This
+    		 * is needed when using this code for the initial data copy when
+    		 * using logical replication. The logical replication catchup might
+    		 * fail otherwise, because some of the updates that it needs to do
+    		 * have already been applied on the target.
+    		 */
+    		StringInfo beginTransaction = makeStringInfo();
+    		appendStringInfo(beginTransaction,
+    						 "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;");
+    		ddlCommandList = lappend(ddlCommandList, beginTransaction->data);
+
 			StringInfo snapShotString = makeStringInfo();
 			appendStringInfo(snapShotString, "SET TRANSACTION SNAPSHOT %s;",
 							 quote_literal_cstr(
@@ -1607,9 +1678,12 @@ CopyShardsToNode(WorkerNode *sourceNode, WorkerNode *targetNode, List *shardInte
 
 		ddlCommandList = lappend(ddlCommandList, copyCommand);
 
-		StringInfo commitCommand = makeStringInfo();
-		appendStringInfo(commitCommand, "COMMIT;");
-		ddlCommandList = lappend(ddlCommandList, commitCommand->data);
+		if (snapshotName != NULL)
+		{
+    		StringInfo commitCommand = makeStringInfo();
+    		appendStringInfo(commitCommand, "COMMIT;");
+    		ddlCommandList = lappend(ddlCommandList, commitCommand->data);
+        }
 
 		Task *task = CitusMakeNode(Task);
 		task->jobId = shardInterval->shardId;
@@ -1627,9 +1701,16 @@ CopyShardsToNode(WorkerNode *sourceNode, WorkerNode *targetNode, List *shardInte
 		taskId++;
 	}
 
-	ExecuteTaskListOutsideTransaction(ROW_MODIFY_NONE, copyTaskList,
-									  MaxAdaptiveExecutorPoolSize,
-									  NULL /* jobIdList (ignored by API implementation) */);
+    if (snapshotName != NULL)
+    {
+    	ExecuteTaskListOutsideTransaction(ROW_MODIFY_NONE, copyTaskList,
+    									  MaxAdaptiveExecutorPoolSize,
+    									  NULL /* jobIdList (ignored by API implementation) */);
+    }
+    else
+    {
+        ExecuteTaskList(ROW_MODIFY_NONE, copyTaskList);
+    }
 }
 
 
@@ -2005,6 +2086,7 @@ DropShardPlacementsFromMetadata(List *shardList,
  */
 static void
 UpdateColocatedShardPlacementMetadataOnWorkers(int64 shardId,
+											   List *colocatedShardList,
 											   char *sourceNodeName, int32 sourceNodePort,
 											   char *targetNodeName, int32 targetNodePort)
 {
@@ -2019,8 +2101,6 @@ UpdateColocatedShardPlacementMetadataOnWorkers(int64 shardId,
 
 	uint32 sourceGroupId = GroupForNode(sourceNodeName, sourceNodePort);
 	uint32 targetGroupId = GroupForNode(targetNodeName, targetNodePort);
-
-	List *colocatedShardList = ColocatedShardIntervalList(shardInterval);
 
 	/* iterate through the colocated shards and copy each */
 	foreach(colocatedShardCell, colocatedShardList)

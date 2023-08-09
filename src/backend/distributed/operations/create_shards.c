@@ -400,13 +400,8 @@ CreateSingleShardTableShardWithRoundRobinPolicy(Oid relationId, uint32 colocatio
 	List *workerNodeList = DistributedTablePlacementNodeList(RowShareLock);
 	workerNodeList = SortList(workerNodeList, CompareWorkerNodes);
 
-	int32 workerNodeCount = list_length(workerNodeList);
-	if (workerNodeCount == 0)
-	{
-		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						errmsg("couldn't find any worker nodes"),
-						errhint("Add more worker nodes")));
-	}
+	int roundRobinNodeIdx =
+		SingleShardTableEmptyColocationDecideNodeId(colocationId);
 
 	char shardStorageType = ShardStorageType(relationId);
 	text *minHashTokenText = NULL;
@@ -414,9 +409,6 @@ CreateSingleShardTableShardWithRoundRobinPolicy(Oid relationId, uint32 colocatio
 	uint64 shardId = GetNextShardId();
 	InsertShardRow(relationId, shardId, shardStorageType,
 				   minHashTokenText, maxHashTokenText);
-
-	/* determine the node index based on colocation id */
-	int roundRobinNodeIdx = colocationId % workerNodeCount;
 
 	int replicationFactor = 1;
 	List *insertedShardPlacements = InsertShardPlacementRows(
@@ -435,6 +427,22 @@ CreateSingleShardTableShardWithRoundRobinPolicy(Oid relationId, uint32 colocatio
 	bool colocatedShard = false;
 	CreateShardsOnWorkers(relationId, insertedShardPlacements,
 						  useExclusiveConnection, colocatedShard);
+}
+
+
+int
+SingleShardTableEmptyColocationDecideNodeId(uint32 colocationId)
+{
+	List *workerNodeList = DistributedTablePlacementNodeList(RowShareLock);
+	int32 workerNodeCount = list_length(workerNodeList);
+	if (workerNodeCount == 0)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						errmsg("couldn't find any worker nodes"),
+						errhint("Add more worker nodes")));
+	}
+
+	return colocationId % workerNodeCount;
 }
 
 

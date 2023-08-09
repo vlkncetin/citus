@@ -16,8 +16,17 @@ typedef enum
 {
 	SHARD_TRANSFER_INVALID_FIRST = 0,
 	SHARD_TRANSFER_MOVE = 1,
-	SHARD_TRANSFER_COPY = 2
+	SHARD_TRANSFER_COPY = 2,
+	SHARD_TRANSFER_MOVE_CITUS_LOCAL_INTERNAL = 3,
 } ShardTransferType;
+
+static inline bool
+IsShardTransferTypeMove(ShardTransferType transferType)
+{
+	return transferType == SHARD_TRANSFER_MOVE ||
+		   transferType == SHARD_TRANSFER_MOVE_CITUS_LOCAL_INTERNAL;
+}
+
 
 extern void TransferShards(int64 shardId,
 						   char *sourceNodeName, int32 sourceNodePort,
