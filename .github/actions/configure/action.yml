@@ -4,5 +4,5 @@ runs:
   steps:
   - name: Configure
     run: |-
-      ./configure --without-pg-version-check
+      sudo ./configure --without-pg-version-check
     shell: bash
