@@ -52,8 +52,6 @@ jobs:
       - uses: actions/checkout@v3.5.0
       - uses: "./.github/actions/parallelization"
         id: parallelization
-        with:
-          count: 10
   test_flakyness:
     if: ${{ inputs.flaky_test }}
     runs-on: ubuntu-latest
@@ -61,7 +59,7 @@ jobs:
       image: ${{ needs.set_image_names.outputs.test_image }}
       options: --user root
     needs:
-      [prepare_parallelization_matrix] #build,
+      [build, prepare_parallelization_matrix]
     env:
       test: "${{ inputs.flaky_test }}"
       runs: "${{ inputs.flaky_test_runs_per_job }}"
