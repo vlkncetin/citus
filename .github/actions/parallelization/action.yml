@@ -1,7 +1,7 @@
 name: 'Parallelization matrix'
 inputs:
   count:
-    required: true
+    required: false
     default: 32
 outputs:
   json:
