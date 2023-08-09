@@ -96,7 +96,7 @@ jobs:
       with:
         pg_major: "${{ env.pg_major }}"
     - uses: "./.github/actions/configure"
-    - run: cat src/config.log
+    - run: cat config.log
       if: always()
     - uses: "./.github/actions/enable_core"
     - name: Run minimal tests
