@@ -1192,6 +1192,11 @@ replicate_table_shards(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR, (errmsg("cannot replicate single shard tables' shards")));
 	}
+	else if (IsCitusTableType(relationId, CITUS_LOCAL_TABLE))
+	{
+		ereport(ERROR, (errmsg("cannot replicate shard of a local table added "
+							   "to metadata")));
+	}
 
 	char transferMode = LookupShardTransferMode(shardReplicationModeOid);
 	EnsureReferenceTablesExistOnAllNodesExtended(transferMode);

@@ -34,8 +34,7 @@ FROM (SELECT shardid FROM pg_dist_shard WHERE logicalrelid='citus_local_table'::
 ERROR:  table citus_local_tables_ent.citus_local_table is a local table, moving shard of a local table added to metadata is currently not supported
 -- replicate_table_shards is not suported
 SELECT replicate_table_shards('citus_local_table'::regclass, 2);
-NOTICE:  Copying shard xxxxx from localhost:xxxxx to localhost:xxxxx ...
-ERROR:  Table 'citus_local_table' is a local table. Replicating shard of a local table added to metadata currently is not supported
+ERROR:  cannot replicate shard of a local table added to metadata
 -- rebalance_table_shards is not supported
 SELECT rebalance_table_shards('citus_local_table');
 ERROR:  table citus_local_tables_ent.citus_local_table is a local table, moving shard of a local table added to metadata is currently not supported

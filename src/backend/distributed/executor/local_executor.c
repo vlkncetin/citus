@@ -765,10 +765,7 @@ ExecuteTaskPlan(PlannedStmt *taskPlan, char *queryString,
 	 * We'll set the executorState->es_processed later, for now only remember
 	 * the count.
 	 */
-	if (taskPlan->commandType != CMD_SELECT)
-	{
-		totalRowsProcessed = queryDesc->estate->es_processed;
-	}
+	totalRowsProcessed = queryDesc->estate->es_processed;
 
 	ExecutorFinish(queryDesc);
 	ExecutorEnd(queryDesc);
