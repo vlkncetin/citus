@@ -106,5 +106,8 @@ jobs:
             src/test/regress/citus_tests/run_test.py $test_name --repeat ${{ env.runs }} --use-base-schedule --use-whole-schedule-line
         done
     - uses: "./.github/actions/save_logs_and_results"
+      if: always()
     - uses: "./.github/actions/save_regressions"
+      if: always()
     - uses: "./.github/actions/stack_trace"
+      if: always()
