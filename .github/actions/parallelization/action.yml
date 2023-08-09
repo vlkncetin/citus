@@ -13,9 +13,9 @@ runs:
       id: generate_matrix
       shell: bash
       run: |-
-        json_array="{\"include\" : ["
+        json_array="{\"id\" : ["
         for ((i = 1; i <= ${{ inputs.count }}; i++)); do
-            json_array+="{\"id\":\"$i\"},"
+            json_array+="$i ,"
         done
         json_array=${json_array%,}
         json_array+=" ]}"
