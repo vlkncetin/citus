@@ -10,7 +10,8 @@ runs:
       path: src/test/regress/results/
   - uses: actions/upload-artifact@v3.1.1
     with:
-      path: *.log
+      path: |
+        **/*.log
   - uses: actions/upload-artifact@v3.1.1
     with:
       path: src/test/regress/tmp_check/master/log
