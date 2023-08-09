@@ -4,6 +4,5 @@ runs:
   steps:
   - name: Configure
     run: |-
-      chown -R circleci .
       sudo ./configure --without-pg-version-check
     shell: bash
