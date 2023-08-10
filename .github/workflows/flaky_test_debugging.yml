@@ -74,7 +74,7 @@ jobs:
       run: echo $HOME
     - name: Define proper HOME path
       timeout-minutes: 60
-      run: echo "HOME=/root" >> $GITHUB_ENV
+      run: echo "HOME=/home/runner" >> $GITHUB_ENV
     - shell: bash
       run: |
         echo $HOME
