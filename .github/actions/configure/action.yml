@@ -5,5 +5,5 @@ runs:
   - name: Configure
     run: |-
       chown -R runner .
-      gosu runner ./configure --without-pg-version-check
+      sudo ./configure --without-pg-version-check
     shell: bash
