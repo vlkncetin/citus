@@ -10,7 +10,7 @@ on:
         default: 50
         type: number
 env:
-  image_suffix: -dev-2188141  #-vbab548a
+  image_suffix: -dev-8d51c4e #-dev-2188141  #-vbab548a
   pg15_version: 15.3
   pg_major: 15
   build_image_name: citus/extbuilder
