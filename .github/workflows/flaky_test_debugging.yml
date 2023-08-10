@@ -59,6 +59,7 @@ jobs:
     runs-on: ubuntu-20.04	#ubuntu-latest
     container:
       image: ${{ needs.set_image_names.outputs.test_image }}
+      options: --user root
     needs:
       [build, prepare_parallelization_matrix]
     env:
