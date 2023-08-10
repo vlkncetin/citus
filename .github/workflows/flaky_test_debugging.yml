@@ -56,7 +56,7 @@ jobs:
           count: 1
   test_flakyness:
     if: ${{ inputs.flaky_test }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04	#ubuntu-latest
     container:
       image: ${{ needs.set_image_names.outputs.test_image }}
     needs:
