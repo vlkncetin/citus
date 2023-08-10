@@ -70,6 +70,8 @@ jobs:
       fail-fast: true
       matrix: ${{ fromJson(needs.prepare_parallelization_matrix.outputs.json) }}
     steps:
+    - run: 'echo HOME=/home/runner | sudo tee -a $GITHUB_ENV'
+      shell: bash
     - uses: actions/checkout@v3.5.0
     - uses: actions/download-artifact@v3.0.1
       with:
