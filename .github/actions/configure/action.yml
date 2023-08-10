@@ -4,6 +4,7 @@ runs:
   steps:
   - name: Configure
     run: |-
+      echo HOME=/home/runner | sudo tee -a $GITHUB_ENV
       chown -R runner .
       gosu runner ./configure --without-pg-version-check
     shell: bash
