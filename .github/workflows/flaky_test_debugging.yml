@@ -59,6 +59,7 @@ jobs:
     runs-on: ubuntu-20.04	#ubuntu-latest
     container:
       image: ${{ needs.set_image_names.outputs.test_image }}
+      options: --user root
     needs:
       [build, prepare_parallelization_matrix]
     env:
@@ -69,8 +70,16 @@ jobs:
       fail-fast: true
       matrix: ${{ fromJson(needs.prepare_parallelization_matrix.outputs.json) }}
     steps:
-    - run: 'echo HOME=/home/runner | sudo tee -a $GITHUB_ENV'
-      shell: bash
+    - shell: bash
+      run: echo $HOME
+    - name: Define proper HOME path
+      timeout-minutes: 60
+      run: echo "HOME=/root" >> $GITHUB_ENV
+    - shell: bash
+      run: |
+        echo $HOME
+        pwd
+        ls -la
     - uses: actions/checkout@v3.5.0
     - uses: actions/download-artifact@v3.0.1
       with:
