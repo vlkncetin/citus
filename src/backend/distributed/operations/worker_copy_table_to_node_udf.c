@@ -30,8 +30,7 @@ PG_FUNCTION_INFO_V1(worker_copy_table_to_node);
  *
  * worker_copy_table_to_node(
  *     source_table regclass,
- *     target_node_id integer,
- *     exclusive_connection boolean
+ *     target_node_id integer
  *  ) RETURNS VOID
  */
 Datum
@@ -39,7 +38,6 @@ worker_copy_table_to_node(PG_FUNCTION_ARGS)
 {
 	Oid relationId = PG_GETARG_OID(0);
 	uint32_t targetNodeId = PG_GETARG_INT32(1);
-	bool exclusiveConnection = PG_GETARG_BOOL(2);
 
 	Oid schemaOid = get_rel_namespace(relationId);
 	char *relationSchemaName = get_namespace_name(schemaOid);
@@ -52,8 +50,7 @@ worker_copy_table_to_node(PG_FUNCTION_ARGS)
 	DestReceiver *destReceiver = CreateShardCopyDestReceiver(
 		executor,
 		list_make2(relationSchemaName, relationName),
-		targetNodeId,
-		exclusiveConnection);
+		targetNodeId);
 
 	StringInfo selectShardQueryForCopy = makeStringInfo();
 

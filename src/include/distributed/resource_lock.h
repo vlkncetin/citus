@@ -168,10 +168,9 @@ extern void EnsureShardOwner(uint64 shardId, bool missingOk);
 extern void LockShardListMetadataOnWorkers(LOCKMODE lockmode, List *shardIntervalList);
 extern void BlockWritesToShardList(List *shardList);
 
-/* Lock shard/relation metadata of the referenced table if exists */
-extern void LockReferencedShardDistributionMetadata(uint64 shardId,
-													CitusTableType tableType,
-													LOCKMODE lock);
+/* Lock shard/relation metadata of the referenced reference table if exists */
+extern void LockReferencedReferenceShardDistributionMetadata(uint64 shardId,
+															 LOCKMODE lock);
 
 /* Lock shard data, for DML commands or remote fetches */
 extern void LockShardResource(uint64 shardId, LOCKMODE lockmode);
@@ -190,8 +189,7 @@ extern void LockTransactionRecovery(LOCKMODE lockMode);
 
 extern void SerializeNonCommutativeWrites(List *shardIntervalList, LOCKMODE lockMode);
 extern void LockRelationShardResources(List *relationShardList, LOCKMODE lockMode);
-extern List * GetSortedReferenceShardIntervals(List *relationList,
-											   CitusTableType tableType);
+extern List * GetSortedReferenceShardIntervals(List *relationList);
 
 void AcquireCreateDistributedTableConcurrentlyLock(Oid relationId);
 

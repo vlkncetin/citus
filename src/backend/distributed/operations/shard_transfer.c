@@ -115,11 +115,7 @@ static void CopyShardTablesViaLogicalReplication(List *shardIntervalList,
 
 static void CopyShardTablesViaBlockWrites(List *shardIntervalList, char *sourceNodeName,
 										  int32 sourceNodePort,
-										  char *targetNodeName, int32 targetNodePort,
-										  bool transactional);
-static Task * CreateRebalancerTask(WorkerNode *targetNode, List *commands);
-static void RunRebalancerTaskListInXact(List *taskList);
-static void LocallyEnableManualChangesToShard(void);
+										  char *targetNodeName, int32 targetNodePort);
 static void EnsureShardCanBeCopied(int64 shardId, const char *sourceNodeName,
 								   int32 sourceNodePort, const char *targetNodeName,
 								   int32 targetNodePort);
@@ -130,8 +126,7 @@ static void ErrorIfReplicatingDistributedTableWithFKeys(List *tableIdList);
 static void DropShardPlacementsFromMetadata(List *shardList,
 											char *nodeName,
 											int32 nodePort);
-static char * DropShardCommand(ShardInterval *shard);
-static void UpdateColocatedShardPlacementMetadataOnWorkers(List *colocatedShardList,
+static void UpdateColocatedShardPlacementMetadataOnWorkers(int64 shardId,
 														   char *sourceNodeName,
 														   int32 sourceNodePort,
 														   char *targetNodeName,
@@ -168,8 +163,7 @@ static List * PostLoadShardCreationCommandList(ShardInterval *shardInterval,
 											   int32 sourceNodePort);
 static ShardCommandList * CreateShardCommandList(ShardInterval *shardInterval,
 												 List *ddlCommandList);
-static char * CreateShardCopyCommand(ShardInterval *shard, WorkerNode *targetNode,
-									 bool exclusiveConnection);
+static char * CreateShardCopyCommand(ShardInterval *shard, WorkerNode *targetNode);
 
 
 /* declarations for dynamic loading */
@@ -553,9 +547,9 @@ TransferShards(int64 shardId, char *sourceNodeName,
 		DropShardPlacementsFromMetadata(colocatedShardList,
 										sourceNodeName, sourceNodePort);
 
-		UpdateColocatedShardPlacementMetadataOnWorkers(colocatedShardList,
-													   sourceNodeName, sourceNodePort,
-													   targetNodeName, targetNodePort);
+		UpdateColocatedShardPlacementMetadataOnWorkers(shardId, sourceNodeName,
+													   sourceNodePort, targetNodeName,
+													   targetNodePort);
 	}
 
 	UpdatePlacementUpdateStatusForShardIntervalList(
@@ -565,164 +559,6 @@ TransferShards(int64 shardId, char *sourceNodeName,
 		PLACEMENT_UPDATE_STATUS_COMPLETED);
 
 	FinalizeCurrentProgressMonitor();
-}
-
-
-/*
- * TransferCitusLocalTableShardInXact transfers shard of given Citus local
- * table within the current transaction.
- */
-void
-TransferCitusLocalTableShardInXact(int64 shardId,
-								   char *sourceNodeName, int32 sourceNodePort,
-								   char *targetNodeName, int32 targetNodePort,
-								   ShardTransferType transferType)
-{
-	ShardInterval *shardInterval = LoadShardInterval(shardId);
-
-	if (!IsCitusTableType(shardInterval->relationId, CITUS_LOCAL_TABLE))
-	{
-		ereport(ERROR, (errmsg("table is not a local table added to metadata")));
-	}
-
-	Oid citusLocalTableId = shardInterval->relationId;
-
-	/* make sure that we're not trying to transfer the shard to the same node */
-	const char *operationName = ShardTransferTypeNames[transferType];
-	ErrorIfSameNode(sourceNodeName, sourceNodePort,
-					targetNodeName, targetNodePort,
-					operationName);
-
-	ErrorIfTargetNodeIsNotSafeForTransfer(targetNodeName, targetNodePort, transferType);
-
-	/*
-	 * Citus local tables can be involved in foreign key relationships only with
-	 * Citus local tables and reference tables. While having a foreign key with
-	 * a reference table is not a problem when moving the shard, having a
-	 * foreign key with another Citus local table is a problem. This is because,
-	 * we don't consider them colocated and we don't move the other Citus
-	 * local table's shard.
-	 *
-	 * Caller should've already verified that but we do it again here to be sure.
-	 */
-	if (transferType == SHARD_TRANSFER_MOVE)
-	{
-		EnsureNoFKeyFromTableType(citusLocalTableId, INCLUDE_CITUS_LOCAL_TABLES);
-		EnsureNoFKeyToTableType(citusLocalTableId, INCLUDE_CITUS_LOCAL_TABLES);
-	}
-
-	/*
-	 * In practice, Citus local tables are not colocated with any other tables,
-	 * except that they are colocated with their partitions if they are partitioned.
-	 */
-	List *colocatedTableList = list_make1_oid(citusLocalTableId);
-	List *colocatedShardList = NIL;
-	if (PartitionedTable(citusLocalTableId))
-	{
-		colocatedTableList = list_concat(
-			colocatedTableList,
-			PartitionList(citusLocalTableId)
-			);
-
-		Oid partitionTableId = InvalidOid;
-		foreach_oid(partitionTableId, colocatedTableList)
-		{
-			colocatedShardList = list_concat(
-				colocatedShardList,
-				LoadShardIntervalList(partitionTableId)
-				);
-		}
-	}
-	else
-	{
-		colocatedShardList = list_make1(shardInterval);
-	}
-
-	/* avoid deadlocks */
-	colocatedTableList = SortList(colocatedTableList, CompareOids);
-	colocatedShardList = SortList(colocatedShardList, CompareShardIntervalsById);
-
-	EnsureTableListOwner(colocatedTableList);
-
-	if (transferType == SHARD_TRANSFER_MOVE)
-	{
-		LockColocatedRelationsForMove(colocatedTableList);
-	}
-
-	EnsureAllShardsCanBeCopied(colocatedShardList, sourceNodeName, sourceNodePort,
-							   targetNodeName, targetNodePort);
-
-	BlockWritesToShardList(colocatedShardList);
-
-	bool transactional = true;
-	CopyShardTablesViaBlockWrites(colocatedShardList,
-								  sourceNodeName, sourceNodePort,
-								  targetNodeName, targetNodePort,
-								  transactional);
-
-	/*
-	 * Insert the placements to pg_dist_placement and sync it to the
-	 * metadata workers.
-	 */
-	uint32 targetGroupId = GroupForNode(targetNodeName, targetNodePort);
-	ShardInterval *colocatedShard = NULL;
-	foreach_ptr(colocatedShard, colocatedShardList)
-	{
-		uint64 placementId = GetNextPlacementId();
-
-		InsertShardPlacementRow(colocatedShard->shardId, placementId,
-								ShardLength(colocatedShard->shardId),
-								targetGroupId);
-
-		if (transferType == SHARD_TRANSFER_COPY)
-		{
-			Assert(ShouldSyncTableMetadata(colocatedShard->relationId));
-
-			char *placementCommand = PlacementUpsertCommand(colocatedShard->shardId,
-															placementId,
-															0, targetGroupId);
-
-			/* use superuser connection to write to pg_dist_placement */
-			SendCommandToWorkersWithMetadataViaSuperUser(placementCommand);
-		}
-	}
-
-	if (transferType == SHARD_TRANSFER_MOVE)
-	{
-		/*
-		 * Since this is move operation, we remove the placements from the metadata
-		 * for the source node after copy.
-		 */
-		DropShardPlacementsFromMetadata(colocatedShardList,
-										sourceNodeName, sourceNodePort);
-
-		UpdateColocatedShardPlacementMetadataOnWorkers(colocatedShardList,
-													   sourceNodeName, sourceNodePort,
-													   targetNodeName, targetNodePort);
-
-		WorkerNode *sourceNode = FindWorkerNode(sourceNodeName, sourceNodePort);
-
-		/* and drop local shard placements */
-		colocatedShard = NULL;
-		foreach_ptr(colocatedShard, colocatedShardList)
-		{
-			/*
-			 * We undistribute Citus local tables that are not chained with any reference
-			 * tables via foreign keys at the end of the utility hook.
-			 * Here we temporarily set the related GUC to off to disable the logic for
-			 * internally executed DDL's that might invoke this mechanism unnecessarily.
-			 */
-			int save_nestlevel = NewGUCNestLevel();
-
-			SetLocalEnableLocalReferenceForeignKeys(false);
-
-			char *dropShardCommand = DropShardCommand(colocatedShard);
-			Task *task = CreateRebalancerTask(sourceNode, list_make1(dropShardCommand));
-			RunRebalancerTaskListInXact(list_make1(task));
-
-			AtEOXact_GUC(true, save_nestlevel);
-		}
-	}
 }
 
 
@@ -1278,16 +1114,8 @@ BlockWritesToShardList(List *shardList)
 		 * We need to lock the referenced reference table metadata to avoid
 		 * asynchronous shard copy in case of cascading DML operations.
 		 */
-		LockReferencedShardDistributionMetadata(shard->shardId, REFERENCE_TABLE,
-												ExclusiveLock);
-
-		/*
-		 * Table might have a foreign key reference to a Citus local table only
-		 * if it is a reference table or a Citus local table. Otherwise, below
-		 * would be a no-op.
-		 */
-		LockReferencedShardDistributionMetadata(shard->shardId, CITUS_LOCAL_TABLE,
-												ExclusiveLock);
+		LockReferencedReferenceShardDistributionMetadata(shard->shardId,
+														 ExclusiveLock);
 
 		LockShardDistributionMetadata(shard->shardId, ExclusiveLock);
 	}
@@ -1507,9 +1335,8 @@ CopyShardTables(List *shardIntervalList, char *sourceNodeName, int32 sourceNodeP
 	}
 	else
 	{
-		bool transactional = false;
 		CopyShardTablesViaBlockWrites(shardIntervalList, sourceNodeName, sourceNodePort,
-									  targetNodeName, targetNodePort, transactional);
+									  targetNodeName, targetNodePort);
 	}
 
 	/*
@@ -1589,23 +1416,19 @@ CreateShardCommandList(ShardInterval *shardInterval, List *ddlCommandList)
  * CopyShardTablesViaBlockWrites copies a shard along with its co-located shards
  * from a source node to target node via COPY command. While the command is in
  * progress, the modifications on the source node is blocked.
- *
- * If transactional is true, then the function runs in the current transaction.
- * Otherwise, it uses outside-transaction connections to perform shard table
- * creation, data copy and etc.
  */
 static void
 CopyShardTablesViaBlockWrites(List *shardIntervalList, char *sourceNodeName,
 							  int32 sourceNodePort, char *targetNodeName,
-							  int32 targetNodePort, bool transactional)
+							  int32 targetNodePort)
 {
-	WorkerNode *sourceNode = FindWorkerNode(sourceNodeName, sourceNodePort);
-	WorkerNode *targetNode = FindWorkerNode(targetNodeName, targetNodePort);
-
 	MemoryContext localContext = AllocSetContextCreate(CurrentMemoryContext,
 													   "CopyShardTablesViaBlockWrites",
 													   ALLOCSET_DEFAULT_SIZES);
 	MemoryContext oldContext = MemoryContextSwitchTo(localContext);
+
+	WorkerNode *sourceNode = FindWorkerNode(sourceNodeName, sourceNodePort);
+	WorkerNode *targetNode = FindWorkerNode(targetNodeName, targetNodePort);
 
 	/* iterate through the colocated shards and copy each */
 	ShardInterval *shardInterval = NULL;
@@ -1623,76 +1446,42 @@ CopyShardTablesViaBlockWrites(List *shardIntervalList, char *sourceNodeName,
 		 */
 		List *ddlCommandList = RecreateShardDDLCommandList(shardInterval, sourceNodeName,
 														   sourceNodePort);
+		char *tableOwner = TableOwner(shardInterval->relationId);
 
-		/* RecreateShardDDLCommandList cannot return an empty list */
-		Assert(list_length(ddlCommandList) > 0);
+		/* drop the shard we created on the target, in case of failure */
+		InsertCleanupRecordInSubtransaction(CLEANUP_OBJECT_SHARD_PLACEMENT,
+											ConstructQualifiedShardName(shardInterval),
+											GroupForNode(targetNodeName, targetNodePort),
+											CLEANUP_ON_FAILURE);
 
-		if (transactional)
-		{
-			Task *task = CreateRebalancerTask(targetNode, ddlCommandList);
-			RunRebalancerTaskListInXact(list_make1(task));
-		}
-		else
-		{
-			/* drop the shard we created on the target, in case of failure */
-			InsertCleanupRecordInSubtransaction(CLEANUP_OBJECT_SHARD_PLACEMENT,
-												ConstructQualifiedShardName(
-													shardInterval),
-												GroupForNode(targetNodeName,
-															 targetNodePort),
-												CLEANUP_ON_FAILURE);
-			char *tableOwner = TableOwner(shardInterval->relationId);
-			SendCommandListToWorkerOutsideTransaction(targetNodeName, targetNodePort,
-													  tableOwner, ddlCommandList);
-		}
+		SendCommandListToWorkerOutsideTransaction(targetNodeName, targetNodePort,
+												  tableOwner, ddlCommandList);
 	}
 
-	if (!transactional)
-	{
-		UpdatePlacementUpdateStatusForShardIntervalList(
-			shardIntervalList,
-			sourceNodeName,
-			sourceNodePort,
-			PLACEMENT_UPDATE_STATUS_COPYING_DATA);
+	UpdatePlacementUpdateStatusForShardIntervalList(
+		shardIntervalList,
+		sourceNodeName,
+		sourceNodePort,
+		PLACEMENT_UPDATE_STATUS_COPYING_DATA);
 
-		ConflictWithIsolationTestingBeforeCopy();
-	}
+	ConflictWithIsolationTestingBeforeCopy();
+	CopyShardsToNode(sourceNode, targetNode, shardIntervalList, NULL);
+	ConflictWithIsolationTestingAfterCopy();
 
-	CopyShardsToNode(sourceNode, targetNode, shardIntervalList, NULL, transactional);
-
-	if (!transactional)
-	{
-		ConflictWithIsolationTestingAfterCopy();
-
-		UpdatePlacementUpdateStatusForShardIntervalList(
-			shardIntervalList,
-			sourceNodeName,
-			sourceNodePort,
-			PLACEMENT_UPDATE_STATUS_CREATING_CONSTRAINTS);
-	}
+	UpdatePlacementUpdateStatusForShardIntervalList(
+		shardIntervalList,
+		sourceNodeName,
+		sourceNodePort,
+		PLACEMENT_UPDATE_STATUS_CREATING_CONSTRAINTS);
 
 	foreach_ptr(shardInterval, shardIntervalList)
 	{
 		List *ddlCommandList =
 			PostLoadShardCreationCommandList(shardInterval, sourceNodeName,
 											 sourceNodePort);
-
-		if (list_length(ddlCommandList) == 0)
-		{
-			continue;
-		}
-
-		if (transactional)
-		{
-			Task *task = CreateRebalancerTask(targetNode, ddlCommandList);
-			RunRebalancerTaskListInXact(list_make1(task));
-		}
-		else
-		{
-			char *tableOwner = TableOwner(shardInterval->relationId);
-			SendCommandListToWorkerOutsideTransaction(targetNodeName, targetNodePort,
-													  tableOwner, ddlCommandList);
-		}
+		char *tableOwner = TableOwner(shardInterval->relationId);
+		SendCommandListToWorkerOutsideTransaction(targetNodeName, targetNodePort,
+												  tableOwner, ddlCommandList);
 
 		MemoryContextReset(localContext);
 	}
@@ -1717,14 +1506,11 @@ CopyShardTablesViaBlockWrites(List *shardIntervalList, char *sourceNodeName,
 		}
 	}
 
-	if (!transactional)
-	{
-		UpdatePlacementUpdateStatusForShardIntervalList(
-			shardIntervalList,
-			sourceNodeName,
-			sourceNodePort,
-			PLACEMENT_UPDATE_STATUS_CREATING_FOREIGN_KEYS);
-	}
+	UpdatePlacementUpdateStatusForShardIntervalList(
+		shardIntervalList,
+		sourceNodeName,
+		sourceNodePort,
+		PLACEMENT_UPDATE_STATUS_CREATING_FOREIGN_KEYS);
 
 	/*
 	 * Iterate through the colocated shards and create DDL commamnds
@@ -1751,119 +1537,32 @@ CopyShardTablesViaBlockWrites(List *shardIntervalList, char *sourceNodeName,
 	ShardCommandList *shardCommandList = NULL;
 	foreach_ptr(shardCommandList, shardIntervalWithDDCommandsList)
 	{
-		if (list_length(shardCommandList->ddlCommandList) == 0)
-		{
-			continue;
-		}
-
-		if (transactional)
-		{
-			Task *task = CreateRebalancerTask(targetNode,
-											  shardCommandList->ddlCommandList);
-			RunRebalancerTaskListInXact(list_make1(task));
-		}
-		else
-		{
-			char *tableOwner = TableOwner(shardCommandList->shardInterval->relationId);
-			SendCommandListToWorkerOutsideTransaction(targetNodeName, targetNodePort,
-													  tableOwner,
-													  shardCommandList->ddlCommandList);
-		}
+		char *tableOwner = TableOwner(shardCommandList->shardInterval->relationId);
+		SendCommandListToWorkerOutsideTransaction(targetNodeName, targetNodePort,
+												  tableOwner,
+												  shardCommandList->ddlCommandList);
 	}
 
-	if (!transactional)
-	{
-		UpdatePlacementUpdateStatusForShardIntervalList(
-			shardIntervalList,
-			sourceNodeName,
-			sourceNodePort,
-			PLACEMENT_UPDATE_STATUS_COMPLETING);
-	}
+	UpdatePlacementUpdateStatusForShardIntervalList(
+		shardIntervalList,
+		sourceNodeName,
+		sourceNodePort,
+		PLACEMENT_UPDATE_STATUS_COMPLETING);
 
 	MemoryContextReset(localContext);
 	MemoryContextSwitchTo(oldContext);
-
-	pfree(sourceNode);
-	pfree(targetNode);
-}
-
-
-/*
- * CreateRebalancerTask creates a DDL task to execute given list of tasks
- * on target node.
- */
-static Task *
-CreateRebalancerTask(WorkerNode *targetNode, List *commands)
-{
-	Task *task = CitusMakeNode(Task);
-	task->jobId = INVALID_JOB_ID;
-	task->taskId = INVALID_TASK_ID;
-	task->taskType = READ_TASK;
-	task->replicationModel = REPLICATION_MODEL_INVALID;
-	SetTaskQueryStringList(task, commands);
-
-	ShardPlacement *targetPlacement = CitusMakeNode(ShardPlacement);
-	SetPlacementNodeMetadata(targetPlacement, targetNode);
-
-	task->taskPlacementList = list_make1(targetPlacement);
-
-	return task;
-}
-
-
-/*
- * RunRebalancerTaskListInXact executes given list of tasks in current
- * transaction via adaptive executor.
- *
- * It temporarily disables citus.enable_manual_changes_to_shards GUC to allow
- * given list of commands to modify shards. Note that we disable it only for
- * local session because changes made to shards are allowed for Citus internal
- * backends anyway.
- */
-static void
-RunRebalancerTaskListInXact(List *taskList)
-{
-	int save_nestlevel = NewGUCNestLevel();
-
-	LocallyEnableManualChangesToShard();
-
-	bool localExecutionSupported = true;
-	ExecuteUtilityTaskList(taskList, localExecutionSupported);
-
-	AtEOXact_GUC(true, save_nestlevel);
-}
-
-
-/*
- * LocallyEnableManualChangesToShard locally enables
- * citus.enable_manual_changes_to_shards GUC.
- */
-static void
-LocallyEnableManualChangesToShard(void)
-{
-	set_config_option("citus.enable_manual_changes_to_shards", "on",
-					  (superuser() ? PGC_SUSET : PGC_USERSET), PGC_S_SESSION,
-					  GUC_ACTION_LOCAL, true, 0, false);
 }
 
 
 /*
  * CopyShardsToNode copies the list of shards from the source to the target.
  * When snapshotName is not NULL it will do the COPY using this snapshot name.
- *
- * Note that "snapshotName" can only be provided when "transactional" is provided
- * as false.
  */
 void
 CopyShardsToNode(WorkerNode *sourceNode, WorkerNode *targetNode, List *shardIntervalList,
-				 char *snapshotName, bool transactional)
+				 char *snapshotName)
 {
-	if (transactional && snapshotName != NULL)
-	{
-		ereport(ERROR, (errmsg("cannot specify the snapshot when copying the "
-							   "shards in the current transaction")));
-	}
-
+	int taskId = 0;
 	List *copyTaskList = NIL;
 	ShardInterval *shardInterval = NULL;
 	foreach_ptr(shardInterval, shardIntervalList)
@@ -1880,60 +1579,57 @@ CopyShardsToNode(WorkerNode *sourceNode, WorkerNode *targetNode, List *shardInte
 
 		List *ddlCommandList = NIL;
 
-		if (!transactional)
-		{
-			/*
-			 * This uses repeatable read because we want to read the table in
-			 * the state exactly as it was when the snapshot was created. This
-			 * is needed when using this code for the initial data copy when
-			 * using logical replication. The logical replication catchup might
-			 * fail otherwise, because some of the updates that it needs to do
-			 * have already been applied on the target.
-			 */
-			StringInfo beginTransaction = makeStringInfo();
-			appendStringInfo(beginTransaction,
-							 "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;");
-			ddlCommandList = lappend(ddlCommandList, beginTransaction->data);
+		/*
+		 * This uses repeatable read because we want to read the table in
+		 * the state exactly as it was when the snapshot was created. This
+		 * is needed when using this code for the initial data copy when
+		 * using logical replication. The logical replication catchup might
+		 * fail otherwise, because some of the updates that it needs to do
+		 * have already been applied on the target.
+		 */
+		StringInfo beginTransaction = makeStringInfo();
+		appendStringInfo(beginTransaction,
+						 "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;");
+		ddlCommandList = lappend(ddlCommandList, beginTransaction->data);
 
-			/* Set snapshot for non-blocking shard split. */
-			if (snapshotName != NULL)
-			{
-				StringInfo snapShotString = makeStringInfo();
-				appendStringInfo(snapShotString, "SET TRANSACTION SNAPSHOT %s;",
-								 quote_literal_cstr(
-									 snapshotName));
-				ddlCommandList = lappend(ddlCommandList, snapShotString->data);
-			}
+		/* Set snapshot for non-blocking shard split. */
+		if (snapshotName != NULL)
+		{
+			StringInfo snapShotString = makeStringInfo();
+			appendStringInfo(snapShotString, "SET TRANSACTION SNAPSHOT %s;",
+							 quote_literal_cstr(
+								 snapshotName));
+			ddlCommandList = lappend(ddlCommandList, snapShotString->data);
 		}
 
-		bool exclusiveConnection = !transactional;
 		char *copyCommand = CreateShardCopyCommand(
-			shardInterval, targetNode, exclusiveConnection);
+			shardInterval, targetNode);
+
 		ddlCommandList = lappend(ddlCommandList, copyCommand);
 
-		if (!transactional)
-		{
-			StringInfo commitCommand = makeStringInfo();
-			appendStringInfo(commitCommand, "COMMIT;");
-			ddlCommandList = lappend(ddlCommandList, commitCommand->data);
-		}
+		StringInfo commitCommand = makeStringInfo();
+		appendStringInfo(commitCommand, "COMMIT;");
+		ddlCommandList = lappend(ddlCommandList, commitCommand->data);
 
-		copyTaskList = lappend(
-			copyTaskList,
-			CreateRebalancerTask(sourceNode, ddlCommandList)
-			);
+		Task *task = CitusMakeNode(Task);
+		task->jobId = shardInterval->shardId;
+		task->taskId = taskId;
+		task->taskType = READ_TASK;
+		task->replicationModel = REPLICATION_MODEL_INVALID;
+		SetTaskQueryStringList(task, ddlCommandList);
+
+		ShardPlacement *taskPlacement = CitusMakeNode(ShardPlacement);
+		SetPlacementNodeMetadata(taskPlacement, sourceNode);
+
+		task->taskPlacementList = list_make1(taskPlacement);
+
+		copyTaskList = lappend(copyTaskList, task);
+		taskId++;
 	}
 
-	if (transactional)
-	{
-		RunRebalancerTaskListInXact(copyTaskList);
-	}
-	else
-	{
-		ExecuteTaskListOutsideTransaction(ROW_MODIFY_NONE, copyTaskList,
-										  MaxAdaptiveExecutorPoolSize,
-										  NULL /* jobIdList (ignored by API implementation) */);
-	}
+	ExecuteTaskListOutsideTransaction(ROW_MODIFY_NONE, copyTaskList,
+									  MaxAdaptiveExecutorPoolSize,
+									  NULL /* jobIdList (ignored by API implementation) */);
 }
 
 
@@ -1944,16 +1640,14 @@ CopyShardsToNode(WorkerNode *sourceNode, WorkerNode *targetNode, List *shardInte
  */
 static char *
 CreateShardCopyCommand(ShardInterval *shard,
-					   WorkerNode *targetNode,
-					   bool exclusiveConnection)
+					   WorkerNode *targetNode)
 {
 	char *shardName = ConstructQualifiedShardName(shard);
 	StringInfo query = makeStringInfo();
 	appendStringInfo(query,
-					 "SELECT pg_catalog.worker_copy_table_to_node(%s::regclass, %u, %s);",
+					 "SELECT pg_catalog.worker_copy_table_to_node(%s::regclass, %u);",
 					 quote_literal_cstr(shardName),
-					 targetNode->nodeId,
-					 exclusiveConnection ? "true" : "false");
+					 targetNode->nodeId);
 	return query->data;
 }
 
@@ -2154,6 +1848,15 @@ CopyShardForeignConstraintCommandListGrouped(ShardInterval *shardInterval,
 		else if (IsCitusTableType(referencedRelationId, CITUS_LOCAL_TABLE))
 		{
 			/*
+			 * Only reference tables and citus local tables can have foreign
+			 * keys to citus local tables but we already do not allow copying
+			 * citus local table shards and we don't try to replicate citus
+			 * local table shards. So, the referencing table must be a reference
+			 * table in this context.
+			 */
+			Assert(IsCitusTableType(relationId, REFERENCE_TABLE));
+
+			/*
 			 * We don't set foreign keys from reference tables to citus local
 			 * tables in worker shard placements of reference tables because
 			 * we don't have the shard placement for citus local table in worker
@@ -2294,38 +1997,18 @@ DropShardPlacementsFromMetadata(List *shardList,
 
 
 /*
- * DropShardCommand returns the command to drop given shard.
- */
-static char *
-DropShardCommand(ShardInterval *shard)
-{
-	StringInfo dropShardCommand = makeStringInfo();
-	appendStringInfo(dropShardCommand, DROP_REGULAR_TABLE_COMMAND,
-					 ConstructQualifiedShardName(shard));
-	return dropShardCommand->data;
-}
-
-
-/*
  * UpdateColocatedShardPlacementMetadataOnWorkers updates the metadata about the
- * placements of given --presumably-- colocated shards by changing the nodename and
+ * placements of the given shard and its colocated shards by changing the nodename and
  * nodeport of the shards from the source nodename/port to target nodename/port.
  *
- * Note that the function does nothing if the first shard in given list belongs to
- * a non-mx table.
+ * Note that the function does nothing if the given shard belongs to a non-mx table.
  */
 static void
-UpdateColocatedShardPlacementMetadataOnWorkers(List *colocatedShardList,
+UpdateColocatedShardPlacementMetadataOnWorkers(int64 shardId,
 											   char *sourceNodeName, int32 sourceNodePort,
 											   char *targetNodeName, int32 targetNodePort)
 {
-	if (list_length(colocatedShardList) == 0)
-	{
-		ereport(ERROR, (errmsg("unexpectedly got an empty list of colocated "
-							   "shards")));
-	}
-
-	ShardInterval *shardInterval = linitial(colocatedShardList);
+	ShardInterval *shardInterval = LoadShardInterval(shardId);
 	ListCell *colocatedShardCell = NULL;
 	bool shouldSyncMetadata = ShouldSyncTableMetadata(shardInterval->relationId);
 
@@ -2336,6 +2019,8 @@ UpdateColocatedShardPlacementMetadataOnWorkers(List *colocatedShardList,
 
 	uint32 sourceGroupId = GroupForNode(sourceNodeName, sourceNodePort);
 	uint32 targetGroupId = GroupForNode(targetNodeName, targetNodePort);
+
+	List *colocatedShardList = ColocatedShardIntervalList(shardInterval);
 
 	/* iterate through the colocated shards and copy each */
 	foreach(colocatedShardCell, colocatedShardList)
