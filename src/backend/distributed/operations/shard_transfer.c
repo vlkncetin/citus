@@ -123,14 +123,6 @@ static List * RecreateTableDDLCommandList(Oid relationId);
 static void EnsureTableListOwner(List *tableIdList);
 static void ErrorIfReplicatingDistributedTableWithFKeys(List *tableIdList);
 
-static void DropShardPlacementsFromMetadata(List *shardList,
-											char *nodeName,
-											int32 nodePort);
-static void UpdateColocatedShardPlacementMetadataOnWorkers(int64 shardId,
-														   char *sourceNodeName,
-														   int32 sourceNodePort,
-														   char *targetNodeName,
-														   int32 targetNodePort);
 static bool IsShardListOnNode(List *colocatedShardList, char *targetNodeName,
 							  uint32 targetPort);
 static void SetupRebalanceMonitorForShardTransfer(uint64 shardId, Oid distributedTableId,
@@ -547,7 +539,7 @@ TransferShards(int64 shardId, char *sourceNodeName,
 		DropShardPlacementsFromMetadata(colocatedShardList,
 										sourceNodeName, sourceNodePort);
 
-		UpdateColocatedShardPlacementMetadataOnWorkers(shardId, sourceNodeName,
+		UpdateColocatedShardPlacementMetadataOnWorkers(ColocatedShardIntervalList(colocatedShard), sourceNodeName,
 													   sourceNodePort, targetNodeName,
 													   targetNodePort);
 	}
@@ -1979,7 +1971,7 @@ RecreateTableDDLCommandList(Oid relationId)
  * DropShardPlacementsFromMetadata drops the shard placement metadata for
  * the shard placements of given shard interval list from pg_dist_placement.
  */
-static void
+void
 DropShardPlacementsFromMetadata(List *shardList,
 								char *nodeName, int32 nodePort)
 {
@@ -2003,12 +1995,12 @@ DropShardPlacementsFromMetadata(List *shardList,
  *
  * Note that the function does nothing if the given shard belongs to a non-mx table.
  */
-static void
-UpdateColocatedShardPlacementMetadataOnWorkers(int64 shardId,
+void
+UpdateColocatedShardPlacementMetadataOnWorkers(List *colocatedShardList,
 											   char *sourceNodeName, int32 sourceNodePort,
 											   char *targetNodeName, int32 targetNodePort)
 {
-	ShardInterval *shardInterval = LoadShardInterval(shardId);
+	ShardInterval *shardInterval = linitial(colocatedShardList);
 	ListCell *colocatedShardCell = NULL;
 	bool shouldSyncMetadata = ShouldSyncTableMetadata(shardInterval->relationId);
 
@@ -2019,8 +2011,6 @@ UpdateColocatedShardPlacementMetadataOnWorkers(int64 shardId,
 
 	uint32 sourceGroupId = GroupForNode(sourceNodeName, sourceNodePort);
 	uint32 targetGroupId = GroupForNode(targetNodeName, targetNodePort);
-
-	List *colocatedShardList = ColocatedShardIntervalList(shardInterval);
 
 	/* iterate through the colocated shards and copy each */
 	foreach(colocatedShardCell, colocatedShardList)

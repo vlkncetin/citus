@@ -272,7 +272,7 @@ static CopyShardState * GetShardState(uint64 shardId, HTAB *shardStateHash,
 									  HTAB *connectionStateHash,
 									  bool *found, bool shouldUseLocalCopy, CopyOutState
 									  copyOutState, bool isColocatedIntermediateResult,
-									  bool isPublishable);
+									  bool isPublishable, bool skipCopyToLocalPlacements);
 static MultiConnection * CopyGetPlacementConnection(HTAB *connectionStateHash,
 													ShardPlacement *placement,
 													bool colocatedIntermediateResult);
@@ -288,7 +288,8 @@ static void InitializeCopyShardState(CopyShardState *shardState,
 									 bool canUseLocalCopy,
 									 CopyOutState copyOutState,
 									 bool colocatedIntermediateResult, bool
-									 isPublishable);
+									 isPublishable,
+                                     bool skipCopyToLocalPlacements);
 static void StartPlacementStateCopyCommand(CopyPlacementState *placementState,
 										   CopyStmt *copyStatement,
 										   CopyOutState copyOutState);
@@ -499,7 +500,8 @@ CopyToExistingShards(CopyStmt *copyStatement, QueryCompletion *completionTag)
 	CitusCopyDestReceiver *copyDest = CreateCitusCopyDestReceiver(tableId, columnNameList,
 																  partitionColumnIndex,
 																  executorState, NULL,
-																  publishableData);
+																  publishableData,
+                                                                  false);
 
 	/* if the user specified an explicit append-to_shard option, write to it */
 	uint64 appendShardId = ProcessAppendToShardOption(tableId, copyStatement);
@@ -1878,7 +1880,8 @@ CopyFlushOutput(CopyOutState cstate, char *start, char *pointer)
 CitusCopyDestReceiver *
 CreateCitusCopyDestReceiver(Oid tableId, List *columnNameList, int partitionColumnIndex,
 							EState *executorState,
-							char *intermediateResultIdPrefix, bool isPublishable)
+							char *intermediateResultIdPrefix, bool isPublishable,
+                            bool skipCopyToLocalPlacements)
 {
 	CitusCopyDestReceiver *copyDest = (CitusCopyDestReceiver *) palloc0(
 		sizeof(CitusCopyDestReceiver));
@@ -1898,6 +1901,7 @@ CreateCitusCopyDestReceiver(Oid tableId, List *columnNameList, int partitionColu
 	copyDest->colocatedIntermediateResultIdPrefix = intermediateResultIdPrefix;
 	copyDest->memoryContext = CurrentMemoryContext;
 	copyDest->isPublishable = isPublishable;
+    copyDest->skipCopyToLocalPlacements = skipCopyToLocalPlacements;
 
 	return copyDest;
 }
@@ -2256,6 +2260,8 @@ CitusCopyDestReceiverReceive(TupleTableSlot *slot, DestReceiver *dest)
 static bool
 CitusSendTupleToPlacements(TupleTableSlot *slot, CitusCopyDestReceiver *copyDest)
 {
+    CitusCopyDestReceiver *citusCopyDest = (CitusCopyDestReceiver *) copyDest;
+
 	TupleDesc tupleDescriptor = copyDest->tupleDescriptor;
 	CopyStmt *copyStatement = copyDest->copyStatement;
 
@@ -2289,7 +2295,8 @@ CitusSendTupleToPlacements(TupleTableSlot *slot, CitusCopyDestReceiver *copyDest
 											   copyDest->shouldUseLocalCopy,
 											   copyDest->copyOutState,
 											   isColocatedIntermediateResult,
-											   copyDest->isPublishable);
+											   copyDest->isPublishable,
+                                               citusCopyDest->skipCopyToLocalPlacements);
 
 	if (!cachedShardStateFound)
 	{
@@ -3353,7 +3360,8 @@ static CopyShardState *
 GetShardState(uint64 shardId, HTAB *shardStateHash,
 			  HTAB *connectionStateHash, bool *found, bool
 			  shouldUseLocalCopy, CopyOutState copyOutState,
-			  bool isColocatedIntermediateResult, bool isPublishable)
+			  bool isColocatedIntermediateResult, bool isPublishable,
+              bool skipCopyToLocalPlacements)
 {
 	CopyShardState *shardState = (CopyShardState *) hash_search(shardStateHash, &shardId,
 																HASH_ENTER, found);
@@ -3362,7 +3370,7 @@ GetShardState(uint64 shardId, HTAB *shardStateHash,
 		InitializeCopyShardState(shardState, connectionStateHash,
 								 shardId, shouldUseLocalCopy,
 								 copyOutState, isColocatedIntermediateResult,
-								 isPublishable);
+								 isPublishable, skipCopyToLocalPlacements);
 	}
 
 	return shardState;
@@ -3380,9 +3388,9 @@ InitializeCopyShardState(CopyShardState *shardState,
 						 bool shouldUseLocalCopy,
 						 CopyOutState copyOutState,
 						 bool colocatedIntermediateResult,
-						 bool isPublishable)
+						 bool isPublishable,
+                         bool skipCopyToLocalPlacements)
 {
-	ListCell *placementCell = NULL;
 	int failedPlacementCount = 0;
 	bool hasRemoteCopy = false;
 
@@ -3399,14 +3407,38 @@ InitializeCopyShardState(CopyShardState *shardState,
 
 	List *activePlacementList = ActiveShardPlacementList(shardId);
 
+    if (skipCopyToLocalPlacements)
+    {
+        List *newActivePlacementList = NIL;
+
+    	ListCell *placementCell = NULL;
+    	int32 localGroupId = GetLocalGroupId();
+
+    	foreach(placementCell, activePlacementList)
+    	{
+    		ShardPlacement *placement = (ShardPlacement *) lfirst(placementCell);
+
+    		if (placement->groupId != localGroupId)
+    		{
+    			newActivePlacementList = lappend(newActivePlacementList, placement);
+    		}
+    	}
+
+        activePlacementList = newActivePlacementList;
+    }
+
+
 	MemoryContextSwitchTo(oldContext);
 
 	shardState->shardId = shardId;
 	shardState->placementStateList = NIL;
 	shardState->copyOutState = NULL;
-	shardState->containsLocalPlacement = ContainsLocalPlacement(shardId);
+	shardState->containsLocalPlacement =
+        skipCopyToLocalPlacements ? false :
+        ContainsLocalPlacement(shardId);
 	shardState->fileDest.fd = -1;
 
+    ListCell *placementCell = NULL;
 	foreach(placementCell, activePlacementList)
 	{
 		ShardPlacement *placement = (ShardPlacement *) lfirst(placementCell);

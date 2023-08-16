@@ -324,7 +324,8 @@ ExecutePlanIntoColocatedIntermediateResults(Oid targetRelationId,
 																  partitionColumnIndex,
 																  executorState,
 																  intermediateResultIdPrefix,
-																  publishableData);
+																  publishableData,
+                                                                  false);
 
 	ExecutePlanIntoDestReceiver(selectPlan, paramListInfo, (DestReceiver *) copyDest);
 
@@ -359,7 +360,8 @@ ExecutePlanIntoRelation(Oid targetRelationId, List *insertTargetList,
 																  columnNameList,
 																  partitionColumnIndex,
 																  executorState, NULL,
-																  publishableData);
+																  publishableData,
+                                                                  false);
 
 	ExecutePlanIntoDestReceiver(selectPlan, paramListInfo, (DestReceiver *) copyDest);
 

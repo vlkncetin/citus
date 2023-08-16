@@ -34,6 +34,14 @@ extern void UpdatePlacementUpdateStatusForShardIntervalList(List *shardIntervalL
 															char *sourceName,
 															int sourcePort,
 															PlacementUpdateStatus status);
+extern void DropShardPlacementsFromMetadata(List *shardList,
+											char *nodeName,
+											int32 nodePort);
+extern void UpdateColocatedShardPlacementMetadataOnWorkers(List *colocatedShardList,
+														   char *sourceNodeName,
+														   int32 sourceNodePort,
+														   char *targetNodeName,
+														   int32 targetNodePort);
 extern void InsertDeferredDropCleanupRecordsForShards(List *shardIntervalList);
 extern void InsertCleanupRecordsForShardPlacementsOnNode(List *shardIntervalList,
 														 int32 groupId);

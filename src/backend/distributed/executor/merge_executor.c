@@ -323,7 +323,8 @@ ExecuteMergeSourcePlanIntoColocatedIntermediateResults(Oid targetRelationId,
 																  partitionColumnIndex,
 																  executorState,
 																  intermediateResultIdPrefix,
-																  publishableData);
+																  publishableData,
+                                                                  false);
 
 	/* We can skip when writing to intermediate files */
 	copyDest->skipCoercions = true;
